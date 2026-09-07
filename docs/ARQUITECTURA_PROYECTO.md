@@ -12,12 +12,12 @@ flowchart LR
   S1[Sensor capacitivo] --> ESP[ESP32]
   S2[Sensor de lluvia] --> ESP
   ESP --> LCD[LCD I2C 16x2]
-  ESP -->|POST JSON + X-API-Key/X-Secret-Key| AUTH[IngestAuthenticator]
+  ESP -->|POST JSON sin sequence + credenciales| AUTH[IngestAuthenticator]
   AUTH --> API[FastAPI v2]
   API --> APP[TelemetryService]
   APP --> DOM[Dominio]
-  APP --> PORT[TelemetryRepository]
-  PORT --> PG
+  APP -->|payload canónico| PORT[TelemetryRepository]
+  PORT -->|bloqueo device + MAX sequence + 1| PG
   PG --- MODE[Tabla PostgreSQL<br/>hypertable opcional]
   API -->|WebSocket después del commit| ST[Streamlit]
   ST -->|lectura, exportación y administración| API
@@ -32,7 +32,7 @@ La administración registra primero el dispositivo y su inventario, y después e
 - **Aplicación:** `TelemetryService`, `AdminService`, comandos y filtros; orquesta reglas sin depender de FastAPI ni psycopg.
 - **Infraestructura:** pool psycopg, `PostgresTelemetryRepository`, `PostgresAdminRepository`, hashing HMAC/scrypt, autenticadores, PostgreSQL portable con TimescaleDB opcional y renderizadores.
 - **API:** routers de telemetría, administración y compatibilidad; DTO estrictos, dependencias, middleware y WebSocket.
-- **Presentación:** Streamlit con cinco páginas y firmware ESP32 autenticado.
+- **Presentación:** Streamlit con cinco páginas y firmware ESP32 autenticado; ambos envían telemetría sin `sequence`, no mantienen contadores locales y muestran la secuencia devuelta por el backend.
 
 La dirección de dependencias sigue API → aplicación → dominio; infraestructura implementa los puertos del dominio y se compone en `main.py`.
 
@@ -67,22 +67,25 @@ No hay usuarios humanos, sesiones ni roles persistidos. Las credenciales bootstr
 Una ingesta ejecuta este flujo:
 
 1. autentica inicialmente la API key y el secret y obtiene un principal sin secretos;
-2. valida que grupo/dispositivo del payload coincidan con la credencial;
-3. calcula el fingerprint canónico del payload;
-4. abre transacción y revalida credencial activa, revocación y dispositivo activo con bloqueo compartido;
+2. valida que grupo/dispositivo del payload coincidan con la credencial; el cliente no envía `sequence` y cualquier valor legado opcional se ignora;
+3. calcula el fingerprint del payload canónico sin `sequence`, incluyendo `measured_at`;
+4. abre transacción, revalida credencial activa, revocación y dispositivo activo, y bloquea la fila de `devices`;
 5. vuelve a autorizar identidad y grupo;
-6. actualiza `last_seen_at` e inserta la cabecera con credencial, snapshots de alias y `payload_sha256`;
-7. resuelve sensores y calibraciones **ya registrados**; nunca autoaprovisiona durante ingesta;
-8. inserta dos filas en `sensor_measurements` y las banderas de calidad si la muestra es nueva;
-9. confirma la transacción y solo después publica el evento WebSocket.
+6. busca por dispositivo el mismo `payload_sha256`: si existe, devuelve la muestra ya persistida; si no, calcula `MAX(sequence) + 1`, empezando en `0`;
+7. actualiza `last_seen_at` e inserta la cabecera con la secuencia asignada, credencial, snapshots de alias y `payload_sha256`;
+8. resuelve sensores y calibraciones **ya registrados**; nunca autoaprovisiona durante ingesta;
+9. inserta dos filas en `sensor_measurements` y las banderas de calidad si la muestra es nueva;
+10. confirma la transacción y solo después publica el evento WebSocket para una muestra nueva.
 
-Idempotencia:
+Idempotencia y respuestas:
 
-- `201`: secuencia nueva;
-- `200`: misma secuencia y fingerprint, sin duplicar detalles ni evento;
-- `409`: misma secuencia con payload diferente, sin sobrescribir el original;
+- `201`: payload diferente/nuevo, persistido con la siguiente secuencia del dispositivo;
+- `200`: retry exacto del payload canónico, con el mismo `measured_at`; devuelve la misma muestra y secuencia sin duplicar detalles ni evento;
 - `401`: autenticación inválida, credencial revocada o dispositivo inactivo;
-- `403`: credencial válida para otra identidad.
+- `403`: credencial válida para otra identidad;
+- `409`: reservado para conflictos administrativos, no para el flujo normal de ingesta por secuencia.
+
+`UNIQUE(device_id, sequence)` conserva la numeración como invariante y defensa de concurrencia; la idempotencia se decide por el payload canónico, no por esa restricción.
 
 ## Modelo relacional
 
@@ -106,12 +109,14 @@ El esquema final contiene **12 tablas físicas**, **12 claves foráneas document
 
 `telemetry_samples` conserva:
 
+- `id` como clave primaria y `sequence` asignada atómicamente por el backend para cada dispositivo desde `0`;
+- la restricción `UNIQUE(device_id, sequence)` como invariante defensiva, no como clave de idempotencia;
 - referencia opcional a la credencial de ingesta;
 - snapshot del alias del dispositivo;
 - snapshot del alias de la credencial;
-- fingerprint SHA-256 del payload.
+- fingerprint SHA-256 del payload canónico sin `sequence` e incluyendo `measured_at`.
 
-Así, renombrar o revocar después no borra la atribución histórica.
+Así, un retry exacto recupera la misma muestra y renombrar o revocar después no borra la atribución histórica. Un payload diferente crea una muestra con la siguiente secuencia.
 
 ## Consultas y Power BI
 
@@ -123,13 +128,13 @@ Así, renombrar o revocar después no borra la atribución histórica.
 
 `streamlit_app.py` registra cinco páginas:
 
-- `catalog.py`: monitoreo, filtros, tiempo real y exportación;
-- `register.py`: simulador de ingesta autenticada;
+- `catalog.py`: monitoreo, filtros, tiempo real y exportación; presenta la secuencia devuelta por la API;
+- `register.py`: simulador de ingesta autenticada que envía `measured_at` y lecturas sin `sequence`, y muestra la secuencia asignada por el backend;
 - `admin.py`: dispositivos y credenciales;
 - `analytics.py`: limpieza, EDA, correlación e IQR;
 - `models.py`: persistencia, regresión lineal y k-NN.
 
-`api_client.py` centraliza operaciones públicas, headers de dispositivo y headers administrativos. `realtime.py` escucha WebSocket e invalida caché para consultar nuevamente la API.
+`api_client.py` centraliza operaciones públicas, headers de dispositivo y headers administrativos. `realtime.py` escucha WebSocket e invalida caché para consultar nuevamente la API. Ni Streamlit ni el firmware usan `Preferences`, NVS o un contador local para numerar muestras; el firmware envía el payload sin `sequence` y trata `200` como retry exacto y `201` como creación nueva.
 
 ## Límites conocidos
 

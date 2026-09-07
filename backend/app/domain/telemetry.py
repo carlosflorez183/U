@@ -33,8 +33,64 @@ class RainReading:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingTelemetrySample:
+    """Muestra validada aún sin la secuencia autoritativa del servidor."""
+
+    schema_version: str
+    group_id: str
+    device_id: str
+    measured_at: datetime
+    sampling_period_seconds: int
+    soil_moisture: SoilMoistureReading
+    rain: RainReading
+    device_alias: str
+    inserted_by_alias: str
+    ingest_credential_id: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        schema_version: str,
+        group_id: str,
+        device_id: str,
+        measured_at: datetime,
+        sampling_period_seconds: int,
+        soil_moisture: SoilMoistureReading,
+        rain: RainReading,
+        device_alias: str,
+        inserted_by_alias: str,
+        ingest_credential_id: str,
+    ) -> "PendingTelemetrySample":
+        if schema_version != "2.0":
+            raise ValueError("schema_version debe ser '2.0'.")
+        if not group_id.strip() or not device_id.strip():
+            raise ValueError("group_id y device_id son obligatorios.")
+        if not device_alias.strip() or not inserted_by_alias.strip():
+            raise ValueError("Los alias de dispositivo y credencial son obligatorios.")
+        if not ingest_credential_id.strip():
+            raise ValueError("La credencial de ingesta es obligatoria.")
+        if sampling_period_seconds not in {5, 10}:
+            raise ValueError("sampling_period_seconds debe ser 5 o 10.")
+        if measured_at.tzinfo is None or measured_at.utcoffset() is None:
+            raise ValueError("measured_at debe incluir zona horaria.")
+        return cls(
+            schema_version=schema_version,
+            group_id=group_id.strip(),
+            device_id=device_id.strip(),
+            measured_at=measured_at.astimezone(timezone.utc),
+            sampling_period_seconds=sampling_period_seconds,
+            soil_moisture=soil_moisture,
+            rain=rain,
+            device_alias=device_alias.strip(),
+            inserted_by_alias=inserted_by_alias.strip(),
+            ingest_credential_id=ingest_credential_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TelemetrySample:
-    """Muestra completa y atribución de quien la insertó."""
+    """Muestra persistida con secuencia asignada por el servidor."""
 
     id: str
     schema_version: str
@@ -54,6 +110,40 @@ class TelemetrySample:
     ingest_credential_id: str | None = None
 
     @classmethod
+    def from_pending(
+        cls,
+        pending: PendingTelemetrySample,
+        *,
+        sequence: int,
+    ) -> "TelemetrySample":
+        if sequence < 0:
+            raise ValueError("sequence debe ser mayor o igual a cero.")
+        received_at = datetime.now(timezone.utc)
+        return cls(
+            id=str(uuid4()),
+            schema_version=pending.schema_version,
+            group_id=pending.group_id,
+            device_id=pending.device_id,
+            sequence=sequence,
+            measured_at=pending.measured_at,
+            received_at=received_at,
+            sampling_period_seconds=pending.sampling_period_seconds,
+            soil_moisture=pending.soil_moisture,
+            rain=pending.rain,
+            quality_flags=_quality_flags(
+                pending.measured_at,
+                received_at,
+                pending.soil_moisture,
+                pending.rain,
+            ),
+            soil_status=_soil_status(pending.soil_moisture.percent),
+            rain_status="RAIN_DETECTED" if pending.rain.detected else "NO_RAIN",
+            device_alias=pending.device_alias,
+            inserted_by_alias=pending.inserted_by_alias,
+            ingest_credential_id=pending.ingest_credential_id,
+        )
+
+    @classmethod
     def create(
         cls,
         *,
@@ -69,42 +159,20 @@ class TelemetrySample:
         inserted_by_alias: str,
         ingest_credential_id: str,
     ) -> "TelemetrySample":
-        if schema_version != "2.0":
-            raise ValueError("schema_version debe ser '2.0'.")
-        if not group_id.strip() or not device_id.strip():
-            raise ValueError("group_id y device_id son obligatorios.")
-        if not device_alias.strip() or not inserted_by_alias.strip():
-            raise ValueError("Los alias de dispositivo y credencial son obligatorios.")
-        if not ingest_credential_id.strip():
-            raise ValueError("La credencial de ingesta es obligatoria.")
-        if sequence < 0:
-            raise ValueError("sequence debe ser mayor o igual a cero.")
-        if sampling_period_seconds not in {5, 10}:
-            raise ValueError("sampling_period_seconds debe ser 5 o 10.")
-        if measured_at.tzinfo is None:
-            raise ValueError("measured_at debe incluir zona horaria.")
-
-        measured_at = measured_at.astimezone(timezone.utc)
-        received_at = datetime.now(timezone.utc)
-        flags = _quality_flags(measured_at, received_at, soil_moisture, rain)
-        return cls(
-            id=str(uuid4()),
+        """Compatibilidad para construir entidades persistidas en utilidades existentes."""
+        pending = PendingTelemetrySample.create(
             schema_version=schema_version,
-            group_id=group_id.strip(),
-            device_id=device_id.strip(),
-            sequence=sequence,
+            group_id=group_id,
+            device_id=device_id,
             measured_at=measured_at,
-            received_at=received_at,
             sampling_period_seconds=sampling_period_seconds,
             soil_moisture=soil_moisture,
             rain=rain,
-            quality_flags=flags,
-            soil_status=_soil_status(soil_moisture.percent),
-            rain_status="RAIN_DETECTED" if rain.detected else "NO_RAIN",
-            device_alias=device_alias.strip(),
-            inserted_by_alias=inserted_by_alias.strip(),
+            device_alias=device_alias,
+            inserted_by_alias=inserted_by_alias,
             ingest_credential_id=ingest_credential_id,
         )
+        return cls.from_pending(pending, sequence=sequence)
 
 
 def _validate_adc(value: int, field: str) -> None:

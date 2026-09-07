@@ -37,12 +37,11 @@ async def ingest_sample(
     service: Annotated[TelemetryService, Depends(get_telemetry_service)],
     event_hub: Annotated[RecordEventHub, Depends(get_record_event_hub)],
 ) -> TelemetrySampleResponse:
-    """Recibe una muestra del ESP32 con idempotencia por dispositivo/secuencia."""
+    """Recibe una muestra; el backend asigna sequence e identifica reintentos exactos."""
     command = IngestTelemetryCommand(
         schema_version=payload.schema_version,
         group_id=payload.group_id,
         device_id=payload.device_id,
-        sequence=payload.sequence,
         measured_at=payload.measured_at,
         sampling_period_seconds=payload.sampling_period_seconds,
         soil_raw_adc=payload.soil_moisture.raw_adc,

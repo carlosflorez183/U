@@ -109,7 +109,6 @@ curl -i -X POST http://localhost:8000/api/v2/telemetry/samples \
     "schema_version":"2.0",
     "group_id":"grupo-01",
     "device_id":"esp32-grupo-01",
-    "sequence":1,
     "measured_at":"2026-09-04T14:00:00Z",
     "sampling_period_seconds":5,
     "soil_moisture":{"raw_adc":2400,"percent":45.0},
@@ -119,13 +118,12 @@ curl -i -X POST http://localhost:8000/api/v2/telemetry/samples \
 
 Semántica de respuesta:
 
-- `201`: muestra nueva, `duplicate=false`;
-- `200`: mismo dispositivo, secuencia y payload, `duplicate=true`;
-- `409`: mismo dispositivo/secuencia con contenido diferente; no se reemplaza la muestra original;
+- `201`: muestra nueva; el backend asigna `sequence` y devuelve `duplicate=false`;
+- `200`: mismo dispositivo y payload exacto, incluido `measured_at`; devuelve la muestra original con `duplicate=true`;
 - `401`: claves ausentes/incorrectas, credencial revocada o dispositivo inactivo;
 - `403`: credencial válida, pero el `group_id` o `device_id` del body no corresponde a ella.
 
-Para comprobar `200`, repite exactamente el mismo comando y payload. No cambies fecha, lecturas ni periodo.
+Para comprobar `200`, repite exactamente el mismo comando y payload. No cambies fecha, lecturas ni periodo. Un `sequence` enviado por clientes antiguos se acepta, pero el backend lo ignora.
 
 ## 7. Consultar con filtros
 
@@ -191,7 +189,7 @@ Antes de cargar el sketch:
 5. evita `localhost`: desde el ESP32 usa la IP LAN del equipo;
 6. usa HTTPS y custodia segura de claves fuera de una práctica local.
 
-El firmware envía `X-API-Key`/`X-Secret-Key`, obtiene hora NTP y persiste la secuencia en NVS. Solo avanza la secuencia con `200` o `201`. Un `409` indica que se reutilizó la secuencia con un payload distinto.
+El firmware envía `X-API-Key`/`X-Secret-Key` y obtiene hora NTP. No administra ni envía `sequence`: la API la asigna por dispositivo y la devuelve en cada `201`/`200`.
 
 ## 12. Diagnóstico y detención
 

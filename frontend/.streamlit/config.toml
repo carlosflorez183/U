@@ -1,0 +1,20 @@
+[theme]
+base = "light"
+primaryColor = "#2F6B45"
+backgroundColor = "#FBF8F1"
+secondaryBackgroundColor = "#F1F4EA"
+textColor = "#1F2A22"
+linkColor = "#2F6B45"
+borderColor = "#D8E0D3"
+dataframeBorderColor = "#D8E0D3"
+dataframeHeaderBackgroundColor = "#E7F0E6"
+greenColor = "#2F6B45"
+blueColor = "#2F6FA3"
+yellowColor = "#C58A2A"
+redColor = "#B44A3A"
+baseRadius = "0.75rem"
+buttonRadius = "0.65rem"
+showWidgetBorder = true
+chartCategoricalColors = ["#2F6B45", "#2F6FA3", "#C58A2A", "#789262", "#6C8EA5", "#A56B4F"]
+chartSequentialColors = ["#F3F7F0", "#E1EDDC", "#C8DEC2", "#A7CBA5", "#7CAE7D", "#568D60", "#2F6B45", "#245438", "#193D2A", "#10291D"]
+chartDivergingColors = ["#244E73", "#3F6F98", "#6E94B2", "#A8BED0", "#DCE7ED", "#E5E8D7", "#C3D0A9", "#91AE78", "#5F8655", "#2F6B45"]

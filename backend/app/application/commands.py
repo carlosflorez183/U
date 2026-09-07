@@ -34,7 +34,6 @@ class IngestTelemetryCommand:
     schema_version: str
     group_id: str
     device_id: str
-    sequence: int
     measured_at: datetime
     sampling_period_seconds: int
     soil_raw_adc: int

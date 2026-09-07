@@ -390,11 +390,15 @@ async def application_exception_handler(
     }
     status_code, code, message = mapping[type(exc)]
     headers = {"WWW-Authenticate": "ApiKey"} if status_code == 401 else None
+    details: Sequence[dict[str, Any]] | None = None
+    if isinstance(exc, ResourceConflictError):
+        details = exc.details
     return error_response(
         request,
         status_code=status_code,
         code=code,
         message=message,
+        details=details,
         headers=headers,
     )
 

@@ -12,7 +12,6 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <LiquidCrystal_I2C.h>
-#include <Preferences.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <time.h>
@@ -42,8 +41,6 @@ constexpr int RAIN_DRY_RAW = 4095;
 constexpr int RAIN_WET_RAW = 1200;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
-Preferences preferences;
-uint64_t sequenceNumber = 0;
 unsigned long lastSampleAt = 0;
 
 float calibratedPercent(int raw, int dryRaw, int wetRaw) {
@@ -87,7 +84,6 @@ int postSample(
   document["schema_version"] = "2.0";
   document["group_id"] = GROUP_ID;
   document["device_id"] = DEVICE_ID;
-  document["sequence"] = sequenceNumber;
   document["measured_at"] = measuredAt;
   document["sampling_period_seconds"] = SAMPLE_PERIOD_MS / 1000;
   document["soil_moisture"]["raw_adc"] = soilRaw;
@@ -107,12 +103,6 @@ int postSample(
   http.addHeader("X-Secret-Key", SECRET_KEY);
   int statusCode = http.POST(body);
   http.end();
-
-  // 200 significa reintento idempotente; 201 significa creación nueva.
-  if (statusCode == 200 || statusCode == 201) {
-    ++sequenceNumber;
-    preferences.putULong64("sequence", sequenceNumber);
-  }
   return statusCode;
 }
 
@@ -123,8 +113,6 @@ void setup() {
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   lcd.init();
   lcd.backlight();
-  preferences.begin("agro-iot", false);
-  sequenceNumber = preferences.getULong64("sequence", 0);
 
   connectWiFi();
   // UTC; se necesita una hora válida para measured_at.
@@ -154,7 +142,6 @@ void loop() {
   lcd.printf("Lluv:%3.0f%% %d", rainPercent, statusCode);
 
   Serial.printf(
-      "seq=%llu soil=%d/%.1f rain=%d/%.1f detected=%d http=%d\n",
-      sequenceNumber, soilRaw, soilPercent, rainRaw, rainPercent,
-      rainDetected, statusCode);
+      "soil=%d/%.1f rain=%d/%.1f detected=%d http=%d\n",
+      soilRaw, soilPercent, rainRaw, rainPercent, rainDetected, statusCode);
 }

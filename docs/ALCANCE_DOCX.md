@@ -7,7 +7,7 @@ Fuente: `Parcial_Integrador_Mineria_Datos_IoT.md` y `arquitectura_iot.md`.
 | ESP32 y dos sensores reales | Implementado en firmware; requiere hardware | `firmware/esp32_agro_iot/esp32_agro_iot.ino` |
 | LCD I2C con dos variables y estado HTTP | Implementado; requiere prueba física | Sketch y `docs/CIRCUITO_ESP32.md` |
 | Captura periódica 5/10 s | Implementado a 5 s, configurable | `SAMPLE_PERIOD_MS` |
-| POST HTTP JSON autenticado | Cumplido | Firmware y `/api/v2/telemetry/samples` con `X-API-Key`/`X-Secret-Key` |
+| POST HTTP JSON autenticado | Cumplido | Firmware y `/api/v2/telemetry/samples` con `X-API-Key`/`X-Secret-Key`; el cliente no envía `sequence` ni mantiene contador local |
 | API Python 3.10+, FastAPI y POO | Cumplido | Capas domain/application/infrastructure/api |
 | Validación de tipo, rango y formato | Cumplido | Pydantic y entidades de dominio |
 | PostgreSQL | Cumplido | psycopg, Compose y repositorios PostgreSQL |
@@ -27,7 +27,8 @@ Fuente: `Parcial_Integrador_Mineria_Datos_IoT.md` y `arquitectura_iot.md`.
 | Autenticación por dispositivo | Mejora cumplida | API key + secret hasheados; revalidación antes de persistir |
 | Gestión de credenciales | Mejora cumplida | emisión, listado sin secretos y revocación administrativa |
 | Trazabilidad de inserción | Mejora cumplida | credencial, snapshots de alias y `payload_sha256` en `telemetry_samples` |
-| Idempotencia segura | Mejora cumplida | `201` nueva, `200` reintento idéntico y `409` payload diferente |
+| Idempotencia segura | Mejora cumplida | payload canónico sin `sequence` e incluyendo `measured_at`: retry exacto devuelve `200` y la misma muestra; payload diferente crea otra con `201` |
+| Secuencia atómica por dispositivo | Mejora cumplida | backend bloquea la fila de `devices` y asigna `MAX(sequence) + 1` desde `0`; `UNIQUE(device_id, sequence)` es defensa, no clave de idempotencia |
 | Power BI directo a PostgreSQL | Preparado; requiere Power BI Desktop | vistas y carpeta `powerbi/` |
 | `.pbix`, 4 KPIs, 6 gráficos, 2 filtros | Pendiente externo | debe generarse/validarse en Windows |
 | Sustentación e interpretación | Responsabilidad del equipo | usar EDA, modelos y guía Power BI |
@@ -42,7 +43,7 @@ La migración detecta TimescaleDB: en el entorno Docker local crea la extensión
 
 ### `002_device_credentials.sql`
 
-Crea `device_credentials`, añade a `telemetry_samples` la credencial de ingesta, snapshots de alias y fingerprint del payload, agrega los índices de seguridad y actualiza `vw_telemetry_wide`.
+Crea `device_credentials`, añade a `telemetry_samples` la credencial de ingesta, snapshots de alias y fingerprint del payload canónico sin `sequence` e incluyendo `measured_at`, agrega los índices de seguridad y actualiza `vw_telemetry_wide`. La secuencia es asignada por el backend bajo bloqueo de la fila del dispositivo; la restricción única por dispositivo/secuencia actúa como invariante defensiva.
 
 ### `003_postgresql_portability.sql`
 
@@ -67,7 +68,8 @@ Las primeras diez forman el grafo IoT/seguridad relacionado. El modelo documenta
 
 ## Seguridad y alcance real
 
-- La ingesta requiere credenciales de dispositivo y no autoaprovisiona inventario.
+- La ingesta requiere credenciales de dispositivo, no autoaprovisiona inventario y no acepta una secuencia decidida por el cliente; cualquier valor legado opcional se ignora.
+- La idempotencia usa el fingerprint del payload canónico: retry exacto `200`, payload diferente `201` con nueva secuencia; no existe un `409` normal de ingesta por secuencia.
 - El alta y la gestión de credenciales requieren headers bootstrap de administración.
 - No hay cuentas, sesiones ni roles de usuarios humanos.
 - Las consultas, exportaciones y WebSocket siguen siendo públicos; producción requiere TLS y controles perimetrales.

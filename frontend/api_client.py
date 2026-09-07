@@ -3,13 +3,43 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import requests
 
 
+@dataclass(frozen=True, slots=True)
+class ApiResponse:
+    """Respuesta JSON junto con sus metadatos de transporte."""
+
+    data: Any
+    status_code: int
+    request_id: str | None
+
+
 class ApiError(RuntimeError):
-    """Error controlado al comunicarse con la API."""
+    """Error público y estructurado al comunicarse con la API."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        code: str = "API_ERROR",
+        details: list[dict[str, Any]] | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        self.message = message
+        self.status_code = status_code
+        self.code = code
+        self.details = list(details or [])
+        self.request_id = request_id
+        context = [f"HTTP {status_code}" if status_code is not None else None, code]
+        if request_id:
+            context.append(f"request_id {request_id}")
+        suffix = " · ".join(item for item in context if item)
+        super().__init__(f"{message} ({suffix})" if suffix else message)
 
 
 class RecordsApiClient:
@@ -27,11 +57,29 @@ class RecordsApiClient:
         api_key: str,
         secret_key: str,
     ) -> dict[str, Any]:
-        return self._request(
+        return self.ingest_telemetry_with_metadata(
+            payload,
+            api_key=api_key,
+            secret_key=secret_key,
+        ).data
+
+    def ingest_telemetry_with_metadata(
+        self,
+        payload: dict[str, Any],
+        *,
+        api_key: str,
+        secret_key: str,
+        request_id: str | None = None,
+    ) -> ApiResponse:
+        headers = {"X-API-Key": api_key, "X-Secret-Key": secret_key}
+        if request_id:
+            headers["X-Request-ID"] = request_id
+        return self._request_with_metadata(
             "POST",
             "/api/v2/telemetry/samples",
+            request_id=request_id,
             json=payload,
-            headers={"X-API-Key": api_key, "X-Secret-Key": secret_key},
+            headers=headers,
         )
 
     def list_telemetry(
@@ -205,10 +253,13 @@ class RecordsApiClient:
                 params=params,
                 timeout=max(self._timeout_seconds, 30),
             )
-            response.raise_for_status()
         except requests.RequestException as exc:
-            detail = exc.response.text if exc.response is not None else str(exc)
-            raise ApiError(f"No se pudo generar la exportación: {detail}") from exc
+            raise ApiError(
+                "No fue posible conectarse con la API para generar la exportación.",
+                code="NETWORK_ERROR",
+            ) from exc
+        if not response.ok:
+            raise _api_error_from_response(response)
         disposition = response.headers.get("Content-Disposition", "")
         filename_match = re.search(r'filename="?([^";]+)"?', disposition)
         filename = filename_match.group(1) if filename_match else f"telemetria.{export_format}"
@@ -216,6 +267,16 @@ class RecordsApiClient:
         return response.content, filename, media_type
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        return self._request_with_metadata(method, path, **kwargs).data
+
+    def _request_with_metadata(
+        self,
+        method: str,
+        path: str,
+        *,
+        request_id: str | None = None,
+        **kwargs: Any,
+    ) -> ApiResponse:
         try:
             response = self._session.request(
                 method,
@@ -223,11 +284,63 @@ class RecordsApiClient:
                 timeout=self._timeout_seconds,
                 **kwargs,
             )
-            response.raise_for_status()
-            return response.json()
         except requests.RequestException as exc:
-            detail = exc.response.text if exc.response is not None else str(exc)
-            raise ApiError(f"No se pudo comunicar con la API: {detail}") from exc
+            raise ApiError(
+                "No fue posible conectarse con la API.",
+                code="NETWORK_ERROR",
+                request_id=request_id,
+            ) from exc
+
+        response_request_id = response.headers.get("X-Request-ID") or request_id
+        if not response.ok:
+            raise _api_error_from_response(response, fallback_request_id=response_request_id)
+        try:
+            data = response.json()
+        except requests.JSONDecodeError as exc:
+            raise ApiError(
+                "La API devolvió una respuesta que no es JSON.",
+                status_code=response.status_code,
+                code="INVALID_RESPONSE",
+                request_id=response_request_id,
+            ) from exc
+        return ApiResponse(
+            data=data,
+            status_code=response.status_code,
+            request_id=response_request_id,
+        )
+
+
+def _api_error_from_response(
+    response: requests.Response,
+    *,
+    fallback_request_id: str | None = None,
+) -> ApiError:
+    request_id = response.headers.get("X-Request-ID") or fallback_request_id
+    code = "HTTP_ERROR"
+    message = "La API rechazó la solicitud."
+    details: list[dict[str, Any]] = []
+    try:
+        payload = response.json()
+    except requests.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+        error = payload["error"]
+        if isinstance(error.get("code"), str) and error["code"]:
+            code = error["code"]
+        if isinstance(error.get("message"), str) and error["message"]:
+            message = error["message"]
+        raw_details = error.get("details")
+        if isinstance(raw_details, list):
+            details = [item for item in raw_details if isinstance(item, dict)]
+        if isinstance(error.get("request_id"), str) and error["request_id"]:
+            request_id = error["request_id"]
+    return ApiError(
+        message,
+        status_code=response.status_code,
+        code=code,
+        details=details,
+        request_id=request_id,
+    )
 
 
 def _admin_headers(api_key: str, secret_key: str) -> dict[str, str]:

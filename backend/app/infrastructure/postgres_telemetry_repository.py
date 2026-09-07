@@ -8,12 +8,13 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
-from app.application.errors import (
-    AuthenticationError,
-    AuthorizationError,
-    ResourceConflictError,
+from app.application.errors import AuthenticationError, AuthorizationError
+from app.domain.telemetry import (
+    PendingTelemetrySample,
+    RainReading,
+    SoilMoistureReading,
+    TelemetrySample,
 )
-from app.domain.telemetry import RainReading, SoilMoistureReading, TelemetrySample
 from app.infrastructure.database import PostgresDatabase
 
 _FILTER_COLUMNS = {
@@ -30,10 +31,10 @@ class PostgresTelemetryRepository:
     def __init__(self, database: PostgresDatabase) -> None:
         self._database = database
 
-    def save(self, sample: TelemetrySample) -> tuple[TelemetrySample, bool]:
-        if sample.ingest_credential_id is None:
+    def save(self, sample: PendingTelemetrySample) -> tuple[TelemetrySample, bool]:
+        if not sample.ingest_credential_id:
             raise AuthenticationError("La muestra no tiene una credencial autenticada.")
-        fingerprint = _payload_fingerprint(sample)
+        received_payload = _canonical_payload(sample)
         with self._database.pool.connection() as connection:
             with connection.transaction():
                 identity = connection.execute(
@@ -51,7 +52,8 @@ class PostgresTelemetryRepository:
                       AND credential.active
                       AND credential.revoked_at IS NULL
                       AND device.active
-                    FOR SHARE OF credential, device
+                    FOR UPDATE OF device
+                    FOR SHARE OF credential
                     """,
                     (sample.ingest_credential_id,),
                 ).fetchone()
@@ -67,17 +69,35 @@ class PostgresTelemetryRepository:
                         "La credencial no corresponde al grupo o dispositivo indicado."
                     )
 
-                stored_sample = replace(
+                for candidate in self._find_payload_candidates(
+                    connection,
+                    identity["device_uuid"],
+                    sample.measured_at,
+                ):
+                    existing_sample = _from_row(candidate)
+                    if _canonical_payload(existing_sample) == received_payload:
+                        return existing_sample, False
+
+                next_sequence = self._next_sequence(
+                    connection,
+                    identity["device_uuid"],
+                )
+                stored_pending = replace(
                     sample,
                     device_alias=str(identity["device_alias"]),
                     inserted_by_alias=str(identity["credential_alias"]),
                     ingest_credential_id=str(identity["credential_id"]),
                 )
+                stored_sample = TelemetrySample.from_pending(
+                    stored_pending,
+                    sequence=next_sequence,
+                )
+                fingerprint = _payload_fingerprint(stored_pending)
                 connection.execute(
                     "UPDATE devices SET last_seen_at = %s WHERE id = %s",
                     (stored_sample.received_at, identity["device_uuid"]),
                 )
-                inserted = connection.execute(
+                connection.execute(
                     """
                     INSERT INTO telemetry_samples(
                         id, device_id, sequence, schema_version, measured_at,
@@ -88,8 +108,6 @@ class PostgresTelemetryRepository:
                         %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s
                     )
-                    ON CONFLICT (device_id, sequence) DO NOTHING
-                    RETURNING id
                     """,
                     (
                         stored_sample.id,
@@ -106,23 +124,7 @@ class PostgresTelemetryRepository:
                         identity["credential_alias"],
                         fingerprint,
                     ),
-                ).fetchone()
-                if inserted is None:
-                    existing = self._find_by_device_sequence(
-                        connection,
-                        stored_sample.device_id,
-                        stored_sample.sequence,
-                    )
-                    if existing is None:
-                        raise RuntimeError("No se pudo recuperar la muestra idempotente.")
-                    existing_fingerprint = existing.get("payload_sha256")
-                    if existing_fingerprint is None:
-                        existing_fingerprint = _payload_fingerprint(_from_row(existing))
-                    if str(existing_fingerprint) != fingerprint:
-                        raise ResourceConflictError(
-                            "La secuencia ya existe con un contenido diferente."
-                        )
-                    return _from_row(existing), False
+                )
 
                 soil_sensor, soil_calibration = self._get_sensor(
                     connection,
@@ -276,15 +278,39 @@ class PostgresTelemetryRepository:
         return row["sensor_id"], row["calibration_id"]
 
     @staticmethod
-    def _find_by_device_sequence(connection, device_id: str, sequence: int):
+    def _find_payload_candidates(connection, device_uuid: Any, measured_at: datetime):
         return connection.execute(
             """
             SELECT wide.*
             FROM vw_telemetry_wide wide
-            WHERE wide.device_id = %s AND wide.sequence = %s
+            WHERE wide.id IN (
+                SELECT sample.id
+                FROM telemetry_samples sample
+                WHERE sample.device_id = %s
+                  AND sample.measured_at = %s
+            )
+            ORDER BY wide.sequence, wide.id
             """,
-            (device_id, sequence),
+            (device_uuid, measured_at),
+        ).fetchall()
+
+    @staticmethod
+    def _next_sequence(connection, device_uuid: Any) -> int:
+        row = connection.execute(
+            """
+            SELECT MAX(sequence) AS max_sequence
+            FROM telemetry_samples
+            WHERE device_id = %s
+            """,
+            (device_uuid,),
         ).fetchone()
+        maximum = row["max_sequence"]
+        if maximum is None:
+            return 0
+        maximum = int(maximum)
+        if maximum >= 9_223_372_036_854_775_807:
+            raise RuntimeError("El dispositivo agotó el rango disponible de secuencias.")
+        return maximum + 1
 
 
 def _from_row(row: dict[str, Any]) -> TelemetrySample:
@@ -315,12 +341,14 @@ def _from_row(row: dict[str, Any]) -> TelemetrySample:
     )
 
 
-def _payload_fingerprint(sample: TelemetrySample) -> str:
-    canonical = {
+def _canonical_payload(
+    sample: PendingTelemetrySample | TelemetrySample,
+) -> dict[str, Any]:
+    """Campos de entrada que identifican un reintento, sin sequence ni credenciales."""
+    return {
         "schema_version": sample.schema_version,
         "group_id": sample.group_id,
         "device_id": sample.device_id,
-        "sequence": sample.sequence,
         "measured_at": _as_utc(sample.measured_at).isoformat(),
         "sampling_period_seconds": sample.sampling_period_seconds,
         "soil_raw_adc": sample.soil_moisture.raw_adc,
@@ -329,6 +357,10 @@ def _payload_fingerprint(sample: TelemetrySample) -> str:
         "rain_wetness_percent": sample.rain.wetness_percent,
         "rain_detected": sample.rain.detected,
     }
+
+
+def _payload_fingerprint(sample: PendingTelemetrySample | TelemetrySample) -> str:
+    canonical = _canonical_payload(sample)
     encoded = json.dumps(
         canonical,
         sort_keys=True,

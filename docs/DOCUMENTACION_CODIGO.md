@@ -2,9 +2,9 @@
 
 ## 1. Propósito y alcance
 
-La solución recibe telemetría agrícola de ESP32, la valida, autentica el dispositivo, la persiste en PostgreSQL/TimescaleDB, publica eventos WebSocket y la presenta en Streamlit y Power BI. También incorpora una API administrativa para registrar dispositivos, gestionar alias/estado y emitir o revocar credenciales.
+La solución recibe telemetría agrícola de ESP32, la valida, autentica el dispositivo, asigna atómicamente una secuencia por dispositivo, la persiste en PostgreSQL/TimescaleDB, publica eventos WebSocket y la presenta en Streamlit y Power BI. También incorpora una API administrativa para registrar dispositivos, gestionar alias/estado y emitir o revocar credenciales.
 
-Se miden humedad capacitiva del suelo y humedad/lluvia superficial, junto con identidad, secuencia, fecha, periodo, estados derivados, banderas de calidad y trazabilidad de la credencial de ingesta.
+Se miden humedad capacitiva del suelo y humedad/lluvia superficial, junto con identidad, fecha, periodo, estados derivados, banderas de calidad y trazabilidad de la credencial de ingesta. El backend numera las muestras por dispositivo desde `0`; el cliente no envía `sequence` y cualquier campo legado opcional se ignora.
 
 El manejo global de errores evita que una petición inválida o una excepción ordinaria termine la API. No protege contra OOM, terminación del contenedor, caída del host o indisponibilidad total de PostgreSQL; Docker aporta healthchecks y `restart: unless-stopped`.
 
@@ -17,13 +17,13 @@ flowchart LR
     AS --> APR[PostgresAdminRepository]
     APR --> DB[(PostgreSQL + TimescaleDB)]
 
-    ESP[ESP32 + sensores] -->|X-API-Key + X-Secret-Key| MW[Middleware ASGI]
+    ESP[ESP32 + sensores] -->|POST JSON sin sequence + X-API-Key/X-Secret-Key| MW[Middleware ASGI]
     MW --> AUTH[IngestAuthenticator]
     AUTH --> DTO[Pydantic estricto]
     DTO --> TS[TelemetryService]
     TS --> DOM[Dominio]
-    DOM --> TR[TelemetryRepository]
-    TR --> DB
+    DOM -->|payload canónico| TR[TelemetryRepository]
+    TR -->|bloqueo device + MAX sequence + 1| DB
     TS --> HUB[RecordEventHub]
     HUB -->|WebSocket| ST[Streamlit]
     ST -->|GET, administración y exportación| MW
@@ -149,7 +149,7 @@ Contrato:
 | 403 | `FORBIDDEN` | credencial válida usada para otro grupo/dispositivo |
 | 404 | `NOT_FOUND` | ruta, dispositivo o credencial inexistente |
 | 405 | `METHOD_NOT_ALLOWED` | verbo no permitido |
-| 409 | `CONFLICT` | recurso duplicado o misma secuencia con payload distinto |
+| 409 | `CONFLICT` | conflictos administrativos, como recursos o alias duplicados |
 | 413 | `PAYLOAD_TOO_LARGE` | cuerpo sobre el límite |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | POST esperado sin JSON |
 | 422 | `VALIDATION_ERROR` | DTO, filtro o dominio inválido |
@@ -163,7 +163,7 @@ Las respuestas `401` incluyen `WWW-Authenticate: ApiKey`. La emisión de credenc
 
 ### 6.1 Telemetría v2
 
-`telemetry_schemas.py` usa Pydantic v2 estricto, `extra="forbid"` y números finitos. Reglas principales: versión literal `2.0`; IDs de 2–64 caracteres; secuencia BIGINT no negativa; fecha ISO-8601 con zona; periodo 5 o 10; ADC 0–4095; porcentajes 0–100; booleano real para lluvia.
+`telemetry_schemas.py` usa Pydantic v2 estricto, `extra="forbid"` y números finitos. Reglas principales: versión literal `2.0`; IDs de 2–64 caracteres; fecha ISO-8601 con zona; periodo 5 o 10; ADC 0–4095; porcentajes 0–100; booleano real para lluvia. El contrato actual no requiere `sequence`: el backend la asigna y cualquier campo legado opcional con ese nombre se acepta solo para ignorarlo.
 
 ### 6.2 Credenciales de dispositivo
 
@@ -235,21 +235,23 @@ Registrar un dispositivo aprovisiona administrativamente grupo, dispositivo, sen
 
 1. El middleware limita cuerpo, exige JSON y asigna `request_id`.
 2. `IngestAuthenticator` valida `X-API-Key` y `X-Secret-Key` y crea un `IngestPrincipal` sin secretos.
-3. Pydantic y dominio validan payload, valores y flags.
-4. `TelemetryService` exige que grupo/dispositivo del payload coincidan con el principal.
-5. Dentro de la transacción, el repositorio revalida credencial y dispositivo con bloqueo compartido para cerrar la carrera frente a revocación o desactivación.
+3. Pydantic y dominio validan payload, valores y flags. El cliente omite `sequence`; si llega como campo legado opcional, se ignora.
+4. `TelemetryService` exige que grupo/dispositivo del payload coincidan con el principal y calcula el fingerprint del payload canónico sin `sequence`, incluyendo `measured_at`.
+5. Dentro de la transacción, el repositorio revalida credencial y dispositivo y bloquea la fila de `devices`, cerrando también la carrera frente a revocación o desactivación.
 6. Se vuelven a verificar grupo e identidad. La ingesta **no** crea grupos, dispositivos, sensores ni calibraciones.
-7. Se calcula/usa el fingerprint canónico y se inserta `telemetry_samples` con snapshots del alias del dispositivo y de la credencial.
-8. Si es nueva, se insertan dos mediciones y flags usando el inventario ya registrado.
+7. Bajo el bloqueo por dispositivo, se busca un `payload_sha256` idéntico. Si existe, se devuelve esa misma muestra; si no, se asigna `MAX(sequence) + 1`, empezando en `0`, y se inserta `telemetry_samples` con snapshots de alias y credencial.
+8. Para una muestra nueva, se insertan dos mediciones y flags usando el inventario ya registrado.
 9. Tras el commit, solo una creación nueva publica WebSocket.
 
 Semántica:
 
-- `201`: muestra nueva, `duplicate=false`;
-- `200`: mismo dispositivo, secuencia y fingerprint, `duplicate=true`;
-- `409`: mismo dispositivo/secuencia con contenido diferente; el original no se sustituye;
+- `201`: payload diferente/nuevo; crea una muestra con la siguiente `sequence`;
+- `200`: retry exacto del payload canónico, incluido el mismo `measured_at`; devuelve la misma muestra y `sequence`, sin duplicar detalles ni evento;
 - `401`: autenticación ausente/incorrecta, credencial revocada o dispositivo inactivo;
-- `403`: credencial válida para una identidad distinta a la declarada.
+- `403`: credencial válida para una identidad distinta a la declarada;
+- `409`: no forma parte del flujo normal de ingesta por secuencia; queda para conflictos administrativos.
+
+`UNIQUE(device_id, sequence)` es una invariante y defensa ante concurrencia, no la clave primaria de idempotencia.
 
 ### 7.4 Compatibilidad v1
 
@@ -286,19 +288,19 @@ telemetry_samples, sensor_measurements, quality_flag_types,
 sample_quality_flags, device_credentials
 ```
 
-`sensor_measurements` concentra el volumen: funciona como hypertable por `measured_at` cuando TimescaleDB está disponible y como tabla estándar indexada en Supabase PostgreSQL 17. `telemetry_samples(device_id, sequence)` mantiene idempotencia. `vw_telemetry_wide` expone mediciones, flags, alias histórico, autor de inserción, credencial y fingerprint; `vw_powerbi_daily_summary` agrega por día/grupo/dispositivo mediante `date_trunc`.
+`sensor_measurements` concentra el volumen: funciona como hypertable por `measured_at` cuando TimescaleDB está disponible y como tabla estándar indexada en Supabase PostgreSQL 17. En `telemetry_samples`, el backend bloquea la fila de `devices` y asigna `MAX(sequence) + 1` por dispositivo desde `0`; `UNIQUE(device_id, sequence)` preserva esa invariante, mientras `payload_sha256` del payload canónico sin `sequence` e incluyendo `measured_at` resuelve la idempotencia. `vw_telemetry_wide` expone mediciones, flags, alias histórico, autor de inserción, credencial y fingerprint; `vw_powerbi_daily_summary` agrega por día/grupo/dispositivo mediante `date_trunc`.
 
 ## 10. Streamlit
 
 `frontend/streamlit_app.py` registra cinco páginas:
 
-1. **Monitoreo (`catalog.py`):** filtros, tabla, gráficos, tiempo real y CSV visible.
-2. **Simulador ESP32 (`register.py`):** payload v2 con credenciales de dispositivo.
+1. **Monitoreo (`catalog.py`):** filtros, tabla, gráficos, tiempo real y CSV visible; muestra la `sequence` devuelta por la API, pero no la genera.
+2. **Simulador ESP32 (`register.py`):** construye el payload v2 con credenciales de dispositivo, `measured_at` y lecturas, sin enviar `sequence`; presenta la secuencia asignada por el backend en la respuesta.
 3. **Administración (`admin.py`):** registro/estado/alias de dispositivos y emisión/listado/revocación de credenciales.
 4. **Análisis exploratorio (`analytics.py`):** limpieza, descriptivos, Pearson, distribución e IQR.
 5. **Modelos predictivos (`models.py`):** baseline, regresión lineal y k-NN con corte temporal.
 
-`api_client.py` centraliza los headers de dispositivo/admin, timeouts, errores y descargas. La UI no usa SQL ni psycopg.
+`api_client.py` centraliza los headers de dispositivo/admin, timeouts, errores y descargas. La UI no usa SQL ni psycopg y no conserva contadores locales para la ingesta.
 
 ## 11. Modelos predictivos
 
@@ -318,9 +320,9 @@ Compara persistencia, regresión lineal y k-NN. Reporta MAE, RMSE, R² y bias, y
 - obtiene hora NTP para `measured_at`;
 - configura grupo/dispositivo ya registrados;
 - envía `X-API-Key` y `X-Secret-Key`;
-- persiste la secuencia en NVS mediante `Preferences`;
-- incrementa secuencia solo con HTTP `200` o `201`;
-- trata `409` como conflicto que requiere revisar el reintento/payload;
+- envía el payload sin `sequence` y no usa `Preferences`, NVS ni contador local;
+- considera HTTP `201` como muestra nueva y `200` como retry exacto de la misma muestra, conservando la `sequence` asignada por la API solo como dato de respuesta;
+- no espera un `409` por secuencia; ese código queda reservado para conflictos administrativos;
 - maneja reconexión WiFi/HTTP.
 
 Las claves deben emitirse antes de instalar el firmware y no deben compartirse ni publicarse. Fuera de desarrollo, el transporte debe ser HTTPS.

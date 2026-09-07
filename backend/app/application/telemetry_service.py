@@ -6,7 +6,12 @@ from app.application.commands import IngestTelemetryCommand, TelemetryQuery
 from app.application.errors import AuthorizationError
 from app.application.exports import ExportFormat, ExportedFile, TelemetryExportRenderer
 from app.domain.repositories import TelemetryRepository
-from app.domain.telemetry import RainReading, SoilMoistureReading, TelemetrySample
+from app.domain.telemetry import (
+    PendingTelemetrySample,
+    RainReading,
+    SoilMoistureReading,
+    TelemetrySample,
+)
 
 
 class TelemetryService:
@@ -26,11 +31,10 @@ class TelemetryService:
             raise AuthorizationError(
                 "La credencial no está autorizada para el grupo o dispositivo indicado."
             )
-        sample = TelemetrySample.create(
+        sample = PendingTelemetrySample.create(
             schema_version=command.schema_version,
             group_id=command.group_id,
             device_id=command.device_id,
-            sequence=command.sequence,
             measured_at=command.measured_at,
             sampling_period_seconds=command.sampling_period_seconds,
             soil_moisture=SoilMoistureReading(

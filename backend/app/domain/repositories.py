@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.domain.entities import Record
-from app.domain.telemetry import TelemetrySample
+from app.domain.telemetry import PendingTelemetrySample, TelemetrySample
 
 
 class RecordRepository(Protocol):
@@ -22,8 +22,8 @@ class RecordRepository(Protocol):
 class TelemetryRepository(Protocol):
     """Puerto de persistencia para la serie temporal IoT."""
 
-    def save(self, sample: TelemetrySample) -> tuple[TelemetrySample, bool]:
-        """Guarda una muestra o devuelve la existente si es un reintento."""
+    def save(self, sample: PendingTelemetrySample) -> tuple[TelemetrySample, bool]:
+        """Asigna sequence y guarda, o devuelve la existente si es un reintento."""
 
     def list_samples(
         self,

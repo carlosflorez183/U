@@ -62,7 +62,6 @@ Cuerpo:
   "schema_version": "2.0",
   "group_id": "grupo-01",
   "device_id": "esp32-grupo-01",
-  "sequence": 1842,
   "measured_at": "2026-09-04T14:00:00Z",
   "sampling_period_seconds": 5,
   "soil_moisture": {"raw_adc": 2470, "percent": 34.8},
@@ -70,7 +69,7 @@ Cuerpo:
 }
 ```
 
-`group_id` y `device_id` deben coincidir exactamente con el dispositivo vinculado a la API key.
+`group_id` y `device_id` deben coincidir exactamente con el dispositivo vinculado a la API key. El cliente no necesita enviar `sequence`: el backend la asigna de forma atómica. Por compatibilidad, un campo `sequence` legacy no negativo es aceptado, pero su valor se ignora.
 
 La respuesta añade trazabilidad:
 
@@ -88,17 +87,16 @@ Los alias se guardan como snapshot: cambiar el alias actual no modifica quién a
 ## 3. Validaciones e idempotencia
 
 - Identificadores: 2–64 caracteres alfanuméricos, `_` o `-`.
-- Secuencia: entero no negativo.
 - Fecha: ISO-8601 con zona horaria.
 - Periodo: 5 o 10 segundos.
 - ADC: 0–4095; porcentajes: 0–100.
-- Propiedades adicionales: rechazadas.
-- Nueva secuencia: HTTP `201`.
-- Misma secuencia y mismo contenido: HTTP `200`, `duplicate=true`.
-- Misma secuencia con contenido distinto: HTTP `409`; nunca reemplaza la muestra original.
-- Una credencial revocada falla incluso al reintentar una secuencia.
+- Propiedades adicionales: rechazadas, salvo `sequence` legacy opcional e ignorada.
+- Payload nuevo: HTTP `201`, `duplicate=false`, con `sequence` asignada por el backend.
+- Mismo dispositivo y payload exacto —incluido `measured_at`—: HTTP `200`, `duplicate=true`, con la muestra original.
+- Payload diferente: recibe una secuencia nueva; no colisiona con valores enviados por el dispositivo.
+- Una credencial revocada falla también al reintentar un payload.
 
-La transacción revalida credencial y dispositivo, almacena cabecera, dos mediciones PostgreSQL, fingerprint, aliases y flags antes de publicar WebSocket.
+La transacción revalida credencial y dispositivo, bloquea la fila del dispositivo, detecta reintentos exactos, asigna `MAX(sequence)+1` y almacena cabecera, dos mediciones PostgreSQL, fingerprint, aliases y flags antes de publicar WebSocket.
 
 ## 4. Códigos de autenticación
 
@@ -106,7 +104,7 @@ La transacción revalida credencial y dispositivo, almacena cabecera, dos medici
 |---:|---|---|
 | 401 | `AUTHENTICATION_REQUIRED` | headers ausentes, clave incorrecta/revocada o dispositivo inactivo |
 | 403 | `FORBIDDEN` | credencial válida, pero cuerpo de otro grupo/dispositivo |
-| 409 | `CONFLICT` | recurso duplicado o secuencia con contenido diferente |
+| 409 | `CONFLICT` | conflicto de un recurso administrativo; la ingesta no usa la secuencia del cliente |
 
 La respuesta no indica si falló API key o secret key, para evitar enumeración. Use `request_id` para correlacionar logs.
 

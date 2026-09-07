@@ -47,7 +47,7 @@ class TelemetryIngestRequest(BaseModel):
     device_id: str = Field(
         strict=True, min_length=2, max_length=64, pattern=IDENTIFIER_PATTERN
     )
-    sequence: int = Field(strict=True, ge=0, le=_MAX_BIGINT)
+    sequence: int | None = Field(default=None, strict=True, ge=0, le=_MAX_BIGINT)
     measured_at: datetime
     sampling_period_seconds: Literal[5, 10]
     soil_moisture: SoilMoistureRequest

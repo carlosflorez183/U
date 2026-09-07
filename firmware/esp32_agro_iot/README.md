@@ -9,7 +9,7 @@ Instala desde Arduino Library Manager:
 - ArduinoJson.
 - LiquidCrystal I2C.
 
-`WiFi`, `HTTPClient`, `Preferences`, `Wire` y `time` forman parte del core ESP32.
+`WiFi`, `HTTPClient`, `Wire` y `time` forman parte del core ESP32.
 
 ## Aprovisionamiento obligatorio
 
@@ -38,12 +38,13 @@ No guarde credenciales reales en Git, capturas o documentación. En producción 
 
 ## Respuestas
 
-- `201`: muestra nueva; incrementa secuencia NVS.
-- `200`: reintento idéntico; incrementa secuencia NVS.
+El firmware no envía `sequence`: la API la asigna de forma atómica por dispositivo y la incluye en la respuesta.
+
+- `201`: muestra nueva con secuencia asignada por el backend.
+- `200`: reintento con exactamente el mismo payload; devuelve la muestra y secuencia originales.
 - `401`: clave ausente, incorrecta, revocada o dispositivo inactivo.
 - `403`: la credencial pertenece a otro grupo/dispositivo.
-- `409`: la secuencia existe con un contenido diferente.
 
-La secuencia no avanza ante `401`, `403`, `409` ni errores de servidor. Una credencial revocada debe sustituirse desde Administración.
+Una credencial revocada debe sustituirse desde Administración. Si se implementan reintentos automáticos en el firmware, deben reutilizar exactamente el mismo JSON —incluido `measured_at`— hasta recibir `200` o `201`.
 
 Consulta `../../docs/CIRCUITO_ESP32.md` antes de energizar el montaje. Antes de la sustentación verifique físicamente LCD, cable UTP, alimentación y calibración seca/húmeda.
