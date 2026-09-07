@@ -98,7 +98,7 @@ Los alias se guardan como snapshot: cambiar el alias actual no modifica quién a
 - Misma secuencia con contenido distinto: HTTP `409`; nunca reemplaza la muestra original.
 - Una credencial revocada falla incluso al reintentar una secuencia.
 
-La transacción revalida credencial y dispositivo, almacena cabecera, dos mediciones TimescaleDB, fingerprint, aliases y flags antes de publicar WebSocket.
+La transacción revalida credencial y dispositivo, almacena cabecera, dos mediciones PostgreSQL, fingerprint, aliases y flags antes de publicar WebSocket.
 
 ## 4. Códigos de autenticación
 

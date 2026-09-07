@@ -79,7 +79,8 @@ backend/
 │       └── telemetry_export_renderer.py
 ├── migrations/
 │   ├── 001_initial.sql
-│   └── 002_device_credentials.sql
+│   ├── 002_device_credentials.sql
+│   └── 003_postgresql_portability.sql
 └── requirements-api.txt
 
 frontend/
@@ -112,12 +113,12 @@ firmware/esp32_agro_iot/
 5. guarda las dependencias compartidas en `app.state`;
 6. registra routers y sirve tráfico solo si el esquema requerido está listo.
 
-`verify_schema()` comprueba las 10 tablas relacionadas requeridas, el marcador `002_device_credentials`, la extensión TimescaleDB y la hypertable `sensor_measurements`. No reemplaza una auditoría completa de columnas, índices, vistas o contratos. La ausencia de base, migración o hypertable detiene el arranque.
+`verify_schema()` comprueba las 10 tablas relacionadas requeridas y el marcador `003_postgresql_portability`, que implica que las migraciones anteriores también se ejecutaron. No reemplaza una auditoría completa de columnas, índices, vistas o contratos. La ausencia de base, tablas o migración detiene el arranque; TimescaleDB es opcional porque Supabase PostgreSQL 17 utiliza `sensor_measurements` como tabla estándar indexada.
 
 Al apagar, se cierran conexiones WebSocket y pool. Rutas de salud:
 
 - `GET /health` y `GET /health/live`: proceso activo.
-- `GET /health/ready`: pool, PostgreSQL, migraciones y TimescaleDB listos.
+- `GET /health/ready`: pool, PostgreSQL y migraciones listos.
 
 ## 5. Manejo global de errores
 
@@ -267,12 +268,13 @@ La API v1 persiste objetos JSONB flexibles en `legacy_records` y está marcada c
 
 Los renderizadores generan CSV, JSON, XLSX y PDF en threadpool. Las descargas incluyen `Content-Disposition` y `X-Content-Type-Options: nosniff`; los filtros coinciden con los de consulta.
 
-## 9. PostgreSQL y TimescaleDB
+## 9. PostgreSQL portable y TimescaleDB opcional
 
 Las migraciones se ejecutan en orden:
 
-- **`001_initial.sql`:** esquema base, catálogos, restricciones, índices, hypertable, vistas y compatibilidad v1.
+- **`001_initial.sql`:** esquema base, catálogos, restricciones, índices, vistas y compatibilidad v1. Detecta TimescaleDB: crea la hypertable si está disponible y conserva una tabla PostgreSQL estándar si no lo está.
 - **`002_device_credentials.sql`:** tabla de credenciales, FK de ingesta, snapshots de alias, fingerprint, índices de seguridad y vista ancha actualizada.
+- **`003_postgresql_portability.sql`:** reemplaza la vista diaria para usar PostgreSQL estándar y fija sus límites de día en UTC.
 
 El resultado es **12 tablas físicas**, **12 claves foráneas documentadas** y **10 tablas IoT/seguridad relacionadas**. `legacy_records` es compatibilidad y `schema_migrations` es control técnico.
 
@@ -284,7 +286,7 @@ telemetry_samples, sensor_measurements, quality_flag_types,
 sample_quality_flags, device_credentials
 ```
 
-`sensor_measurements` es la hypertable por `measured_at`. `telemetry_samples(device_id, sequence)` mantiene idempotencia. `vw_telemetry_wide` expone mediciones, flags, alias histórico, autor de inserción, credencial y fingerprint; `vw_powerbi_daily_summary` agrega por día/grupo/dispositivo.
+`sensor_measurements` concentra el volumen: funciona como hypertable por `measured_at` cuando TimescaleDB está disponible y como tabla estándar indexada en Supabase PostgreSQL 17. `telemetry_samples(device_id, sequence)` mantiene idempotencia. `vw_telemetry_wide` expone mediciones, flags, alias histórico, autor de inserción, credencial y fingerprint; `vw_powerbi_daily_summary` agrega por día/grupo/dispositivo mediante `date_trunc`.
 
 ## 10. Streamlit
 
@@ -379,7 +381,7 @@ Orden recomendado:
 7. `backend/app/domain/auth.py` y `application/errors.py` — principal y errores.
 8. `backend/app/api/telemetry_schemas.py` y `application/telemetry_service.py` — contrato/caso de uso v2.
 9. `backend/app/infrastructure/postgres_telemetry_repository.py` — revalidación, idempotencia y transacción.
-10. `backend/migrations/001_initial.sql` y `002_device_credentials.sql` — modelo persistente.
+10. `backend/migrations/001_initial.sql`, `002_device_credentials.sql` y `003_postgresql_portability.sql` — modelo persistente.
 11. `frontend/api_client.py`, `streamlit_app.py` y `app_pages/admin.py` — consumo y administración.
 12. `firmware/esp32_agro_iot/esp32_agro_iot.ino` — cliente físico autenticado.
 13. `frontend/prediction.py` y `frontend/tests/test_prediction.py` — modelos y evidencia matemática.

@@ -1,4 +1,4 @@
-"""Pool y comprobaciones de PostgreSQL/TimescaleDB."""
+"""Pool y comprobaciones de PostgreSQL portable."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class PostgresDatabase:
             connection.execute("SELECT 1").fetchone()
 
     def verify_schema(self) -> None:
-        """Falla rápido si faltan las tablas relacionadas o la hypertable."""
+        """Falla rápido si faltan las tablas o la migración de seguridad."""
         with self.pool.connection() as connection:
             table_rows = connection.execute(
                 """
@@ -57,32 +57,15 @@ class PostgresDatabase:
                 raise RuntimeError(
                     "Esquema PostgreSQL incompleto; faltan: " + ", ".join(missing)
                 )
-            security_migration = connection.execute(
+            portability_migration = connection.execute(
                 """
                 SELECT EXISTS (
                     SELECT 1 FROM schema_migrations
-                    WHERE version = '002_device_credentials'
+                    WHERE version = '003_postgresql_portability'
                 ) AS applied
                 """
             ).fetchone()
-            if not security_migration["applied"]:
+            if not portability_migration["applied"]:
                 raise RuntimeError(
-                    "Debe aplicarse la migración 002_device_credentials."
-                )
-            extension = connection.execute(
-                "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') AS enabled"
-            ).fetchone()
-            hypertable = connection.execute(
-                """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM timescaledb_information.hypertables
-                    WHERE hypertable_schema = 'public'
-                      AND hypertable_name = 'sensor_measurements'
-                ) AS enabled
-                """
-            ).fetchone()
-            if not extension["enabled"] or not hypertable["enabled"]:
-                raise RuntimeError(
-                    "TimescaleDB debe estar habilitado y sensor_measurements debe ser hypertable."
+                    "Debe aplicarse la migración 003_postgresql_portability."
                 )

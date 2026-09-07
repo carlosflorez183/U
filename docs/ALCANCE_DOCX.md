@@ -38,11 +38,15 @@ Las migraciones se aplican en orden:
 
 ### `001_initial.sql`
 
-Crea la extensión TimescaleDB, esquema base de organización, inventario, calibración, telemetría y calidad; convierte `sensor_measurements` en hypertable; crea `legacy_records`, `schema_migrations`, catálogos, índices y vistas.
+La migración detecta TimescaleDB: en el entorno Docker local crea la extensión y convierte `sensor_measurements` en hypertable; en Supabase PostgreSQL 17 crea el mismo esquema como tabla estándar indexada. También crea `legacy_records`, `schema_migrations`, catálogos, índices y vistas. Para demostrar literalmente el requisito TimescaleDB del enunciado debe usarse el entorno local o un proveedor compatible.
 
 ### `002_device_credentials.sql`
 
 Crea `device_credentials`, añade a `telemetry_samples` la credencial de ingesta, snapshots de alias y fingerprint del payload, agrega los índices de seguridad y actualiza `vw_telemetry_wide`.
+
+### `003_postgresql_portability.sql`
+
+Reemplaza el resumen diario con `date_trunc` estándar y fija el día analítico en UTC. Esto actualiza también bases que ya habían aplicado la definición anterior con `time_bucket`.
 
 El estado final contiene:
 
@@ -52,7 +56,7 @@ El estado final contiene:
 4. `sensors`
 5. `calibrations`
 6. `telemetry_samples`
-7. `sensor_measurements` — hypertable TimescaleDB
+7. `sensor_measurements` — tabla PostgreSQL indexada; hypertable cuando TimescaleDB está disponible
 8. `quality_flag_types`
 9. `sample_quality_flags`
 10. `device_credentials`

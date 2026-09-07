@@ -15,11 +15,10 @@ Para una arquitectura concreta con Tiger Cloud, Render y conexión directa desde
 
 ## Base de datos
 
-- Usa un proveedor PostgreSQL que soporte explícitamente TimescaleDB; no asumas que cualquier plan de Supabase lo habilita.
+- La migración es portable: habilita TimescaleDB y convierte `sensor_measurements` en hypertable cuando la extensión está disponible; en Supabase PostgreSQL 17 conserva la misma estructura como tabla estándar indexada.
 - El servicio `migrate` ejecuta en orden todos los archivos `backend/migrations/*.sql` antes de iniciar la API.
-- Verifica que `schema_migrations` contenga `001_initial` y `002_device_credentials`.
-- Verifica la hypertable en `timescaledb_information.hypertables`.
-- Ajusta intervalos de chunk, compresión y retención sólo después de medir volumen.
+- Verifica que `schema_migrations` contenga `001_initial`, `002_device_credentials` y `003_postgresql_portability`, y que existan las dos vistas.
+- En instalaciones TimescaleDB puedes ajustar chunks, compresión y retención después de medir volumen; en PostgreSQL estándar monitorea índices, tamaño y planes de consulta.
 - Power BI debe leer `vw_telemetry_wide` y `vw_powerbi_daily_summary`, no tablas internas.
 
 ## Autenticación del ESP32
@@ -39,7 +38,7 @@ Mantén una réplica mientras el hub WebSocket esté en memoria. Para varias ré
 - Alerta cuando `/health/ready` falle.
 - Mide muestras/minuto, latencia `received_at - measured_at`, duplicados y flags.
 - Centraliza logs de API, frontend y PostgreSQL.
-- Controla conexiones del pool y almacenamiento de chunks TimescaleDB.
+- Controla conexiones del pool, tamaño de tablas e índices; si TimescaleDB está activo, controla también sus chunks.
 
 ## Verificación previa a entrega
 
@@ -49,7 +48,7 @@ docker compose up --build -d
 docker compose ps
 curl -f http://localhost:8000/health/ready
 docker compose exec postgres psql -U agro_iot -d agro_iot -c \
-  "SELECT hypertable_name FROM timescaledb_information.hypertables;"
+  "SELECT version FROM schema_migrations ORDER BY version;"
 ```
 
 Entrega recomendada: repositorio Git sin secretos, tag de versión, capturas, evidencia de calibración, diagrama de circuito, exportación de muestra y `.pbix` validado en Windows.

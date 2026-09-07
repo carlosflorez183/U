@@ -18,7 +18,7 @@ flowchart LR
   APP --> DOM[Dominio]
   APP --> PORT[TelemetryRepository]
   PORT --> PG
-  PG --- TS[TimescaleDB hypertable]
+  PG --- MODE[Tabla PostgreSQL<br/>hypertable opcional]
   API -->|WebSocket después del commit| ST[Streamlit]
   ST -->|lectura, exportación y administración| API
   PG -->|vistas SQL| PBI[Power BI]
@@ -30,7 +30,7 @@ La administración registra primero el dispositivo y su inventario, y después e
 
 - **Dominio:** `TelemetrySample`, lecturas de suelo/lluvia, `IngestPrincipal`, errores de autenticación/autorización/conflicto e interfaces de repositorio.
 - **Aplicación:** `TelemetryService`, `AdminService`, comandos y filtros; orquesta reglas sin depender de FastAPI ni psycopg.
-- **Infraestructura:** pool psycopg, `PostgresTelemetryRepository`, `PostgresAdminRepository`, hashing HMAC/scrypt, autenticadores, TimescaleDB y renderizadores.
+- **Infraestructura:** pool psycopg, `PostgresTelemetryRepository`, `PostgresAdminRepository`, hashing HMAC/scrypt, autenticadores, PostgreSQL portable con TimescaleDB opcional y renderizadores.
 - **API:** routers de telemetría, administración y compatibilidad; DTO estrictos, dependencias, middleware y WebSocket.
 - **Presentación:** Streamlit con cinco páginas y firmware ESP32 autenticado.
 
@@ -102,7 +102,7 @@ erDiagram
   QUALITY_FLAG_TYPES ||--o{ SAMPLE_QUALITY_FLAGS : clasifica
 ```
 
-El esquema final contiene **12 tablas físicas**, **12 claves foráneas documentadas** y **10 tablas relacionadas**: organización, inventario, telemetría, calidad y seguridad. `legacy_records` conserva compatibilidad v1 y `schema_migrations` controla `001_initial` y `002_device_credentials`. `sensor_measurements` es la única hypertable.
+El esquema final contiene **12 tablas físicas**, **12 claves foráneas documentadas** y **10 tablas relacionadas**: organización, inventario, telemetría, calidad y seguridad. `legacy_records` conserva compatibilidad v1 y `schema_migrations` controla `001_initial`, `002_device_credentials` y `003_postgresql_portability`. `sensor_measurements` es una tabla indexada en Supabase y una hypertable en instalaciones con TimescaleDB.
 
 `telemetry_samples` conserva:
 

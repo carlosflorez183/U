@@ -2,11 +2,11 @@
 
 ## 1. Recomendación para este proyecto
 
-La opción más sencilla para publicar la solución sin cambiar su arquitectura es:
+La migración funciona en dos modos: PostgreSQL 17 estándar en Supabase y TimescaleDB cuando la extensión está disponible. Para el despliegue actual se recomienda:
 
 | Componente | Servicio recomendado | Motivo |
 |---|---|---|
-| PostgreSQL + TimescaleDB | **Tiger Cloud** | TimescaleDB administrado, PostgreSQL estándar, endpoint TLS y operación especializada en series temporales |
+| PostgreSQL | **Supabase PostgreSQL 17** | Servicio ya elegido, endpoint TLS y compatibilidad con el esquema portable |
 | API FastAPI | **Render Web Service** | Despliegue desde Dockerfile, HTTPS administrado, healthchecks y WebSocket |
 | Frontend Streamlit | **Render Web Service** | Puede usar el Dockerfile actual y conectarse a la API mediante HTTPS/WSS |
 | Informes | **Power BI Desktop/Service** | Conector PostgreSQL nativo, Import o DirectQuery y soporte de gateway |
@@ -18,7 +18,7 @@ flowchart LR
     ESP[ESP32] -->|HTTPS + API key/secret| API[FastAPI en Render]
     WEB[Usuario] -->|HTTPS| ST[Streamlit en Render]
     ST -->|HTTPS + WSS| API
-    API -->|PostgreSQL + TLS| DB[(Tiger Cloud PostgreSQL/TimescaleDB)]
+    API -->|PostgreSQL + TLS| DB[(Supabase PostgreSQL 17)]
     PBI[Power BI Desktop o Service] -->|PostgreSQL + TLS<br/>rol de solo lectura| DB
 ```
 
@@ -35,15 +35,15 @@ Power BI debe conectarse **directamente a PostgreSQL**, no a FastAPI. Debe leer 
 
 | Alternativa | Compatibilidad | Ventajas | Consideraciones | Recomendación |
 |---|---|---|---|---|
-| **Tiger Cloud** | Nativa para PostgreSQL/TimescaleDB | Menos operación, TLS, backups y herramientas para series temporales | Revisar límites y precio vigente; Power BI necesita acceso de red al endpoint | **Primera opción** |
-| **Aiven for PostgreSQL** | TimescaleDB como extensión | PostgreSQL administrado y extensión habilitable | Algunas funciones con licencia Timescale no están disponibles; verificar la versión | Buena alternativa |
-| **Azure Database for PostgreSQL** | Puede ofrecer TimescaleDB según versión/región | Integración favorable con Power BI, red privada y ecosistema Azure | Confirmar antes de contratar que la versión exacta de TimescaleDB sea compatible con el proyecto | Opción empresarial |
-| **VPS: DigitalOcean, Hetzner, AWS EC2, Azure VM** | Completa usando la imagen Docker actual | Control total y posibilidad de ejecutar todo el Compose | El equipo administra TLS, firewall, backups, parches, restauración y monitoreo | Económica si sabes operar Linux |
-| PostgreSQL genérico | No garantizada | Puede ser barato | Este proyecto no inicia sin extensión TimescaleDB e hypertable | No usar sin confirmación explícita |
+| **Supabase PostgreSQL 17** | PostgreSQL estándar | TLS, backups, panel y servicio ya elegido | No ofrece TimescaleDB; la migración usa la tabla estándar indexada | **Primera opción actual** |
+| **Tiger Cloud** | Nativa para PostgreSQL/TimescaleDB | Operación especializada en series temporales | Servicio adicional y costos/límites propios | Si se exige TimescaleDB en cloud |
+| **Aiven for PostgreSQL** | TimescaleDB según servicio | PostgreSQL administrado y extensión habilitable | Verificar versión y funciones disponibles | Alternativa con TimescaleDB |
+| **Azure Database for PostgreSQL** | PostgreSQL; extensiones según versión/región | Integración favorable con Power BI y red privada | Confirmar extensiones requeridas antes de contratar | Opción empresarial |
+| **VPS** | Completa usando la imagen Docker actual | Control total y posibilidad de ejecutar todo el Compose | El equipo administra TLS, firewall, backups, parches y monitoreo | Si sabes operar Linux |
 
-Tiger Cloud expone una conexión PostgreSQL con TLS; su documentación muestra DSN con `sslmode=require` y ofrece servicios PostgreSQL especializados en series temporales: [conexión con psql](https://docs.tigerdata.com/integrations/latest/psql) y [creación de servicios](https://docs.tigerdata.com/getting-started/latest/services/).
+Supabase PostgreSQL 17 no incluye TimescaleDB. La migración detecta esta situación y conserva `sensor_measurements` como tabla PostgreSQL estándar indexada; la vista diaria usa `date_trunc` con límites UTC, por lo que API, Streamlit y Power BI mantienen el mismo contrato independientemente de la zona de sesión. Consulta la [documentación de TimescaleDB en Supabase](https://supabase.com/docs/guides/database/extensions/timescaledb) y su [guía de migración a PostgreSQL particionado](https://supabase.com/docs/guides/database/migrating-to-pg-partman) si el volumen futuro exige particionamiento.
 
-Aiven declara TimescaleDB como extensión disponible, aunque documenta limitaciones para algunas funciones sujetas a otra licencia: [TimescaleDB en Aiven](https://aiven.io/docs/products/postgresql/concepts/timescaledb).
+Tiger Cloud sigue siendo una alternativa si la entrega debe demostrar una hypertable en cloud: [conexión con psql](https://docs.tigerdata.com/integrations/latest/psql) y [creación de servicios](https://docs.tigerdata.com/getting-started/latest/services/).
 
 ### 2.2 API y frontend
 
@@ -82,28 +82,28 @@ brew link --force libpq
 
 7. No publiques todavía credenciales de firmware. Primero despliega y valida la API HTTPS.
 
-## 4. Crear PostgreSQL/TimescaleDB en Tiger Cloud
+## 4. Preparar Supabase PostgreSQL 17
 
-### 4.1 Crear el servicio
+### 4.1 Obtener una conexión segura
 
-1. Crea una cuenta y un servicio PostgreSQL/TimescaleDB.
-2. Elige una región cercana a Render y una capacidad pequeña para comenzar.
+1. Rota cualquier contraseña que haya sido compartida en chats, capturas o archivos.
+2. En **Connect** copia la conexión directa; si tu red no admite IPv6, usa el pooler en modo sesión para la API.
 3. Guarda en un gestor de secretos:
    - host;
    - puerto;
    - base de datos;
-   - usuario propietario;
+   - usuario;
    - contraseña;
    - URI/DSN con TLS.
 4. No pegues estos valores en documentación, Git, capturas o tickets.
 
-Ejemplo de formato, usando valores ficticios:
+Ejemplo con valores ficticios:
 
 ```text
 postgresql://USUARIO:CONTRASENA@HOST:PUERTO/BASE?sslmode=require
 ```
 
-La base puede llamarse `tsdb`, `defaultdb` u otro nombre definido por el proveedor; no asumas que será `agro_iot`.
+La contraseña debe codificarse como componente URI si contiene caracteres reservados.
 
 ### 4.2 Ejecutar las migraciones
 
@@ -127,9 +127,9 @@ SELECT version, applied_at
 FROM schema_migrations
 ORDER BY version;
 
-SELECT hypertable_schema, hypertable_name
-FROM timescaledb_information.hypertables
-WHERE hypertable_name = 'sensor_measurements';
+SELECT EXISTS (
+    SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'
+) AS timescaledb_enabled;
 
 SELECT COUNT(*) AS public_tables
 FROM information_schema.tables
@@ -144,10 +144,10 @@ ORDER BY table_name;
 SQL
 ```
 
-Resultado esperado:
+Resultado esperado en Supabase PostgreSQL 17:
 
-- migraciones `001_initial` y `002_device_credentials`;
-- hypertable `sensor_measurements`;
+- migraciones `001_initial`, `002_device_credentials` y `003_postgresql_portability`;
+- `timescaledb_enabled = false` y `sensor_measurements` como tabla estándar;
 - 12 tablas físicas;
 - vistas `vw_telemetry_wide` y `vw_powerbi_daily_summary`.
 
@@ -219,7 +219,7 @@ curl -i https://URL-API/health/live
 curl -i https://URL-API/health/ready
 ```
 
-`/health/ready` debe responder `200` y mostrar PostgreSQL conectado. TimescaleDB, la migración `002` y la hypertable se verifican al arrancar el proceso; cada llamada posterior a readiness comprueba la conexión con PostgreSQL, no repite toda la auditoría del esquema.
+`/health/ready` debe responder `200` y mostrar PostgreSQL conectado. Al arrancar, el proceso verifica las tablas y la migración `003_postgresql_portability`; TimescaleDB no es obligatorio en Supabase. Cada llamada posterior a readiness comprueba la conexión con PostgreSQL, no repite toda la auditoría del esquema.
 
 También verifica WebSocket con un cliente compatible:
 
@@ -436,9 +436,11 @@ curl -f https://URL-FRONTEND/_stcore/health
 ```sql
 SELECT version FROM schema_migrations ORDER BY version;
 
-SELECT hypertable_name
-FROM timescaledb_information.hypertables
-WHERE hypertable_name = 'sensor_measurements';
+SELECT to_regclass('public.sensor_measurements') AS measurements_table;
+
+SELECT EXISTS (
+    SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'
+) AS timescaledb_enabled;
 
 SELECT COUNT(*), MAX(measured_at)
 FROM vw_telemetry_wide;
@@ -464,20 +466,23 @@ FROM vw_telemetry_wide;
 
 ## 14. Checklist de decisión
 
-Antes de contratar, confirma por escrito o en documentación del proveedor:
+Antes de publicar, confirma:
 
-- [ ] TimescaleDB está disponible en la versión de PostgreSQL elegida.
-- [ ] `CREATE EXTENSION timescaledb` está permitido.
-- [ ] `create_hypertable` y `time_bucket` están disponibles.
 - [ ] El endpoint PostgreSQL admite TLS y Power BI puede alcanzarlo.
+- [ ] La migración produce 12 tablas y las dos vistas.
+- [ ] `schema_migrations` contiene `001_initial`, `002_device_credentials` y `003_postgresql_portability`.
 - [ ] Existen backups y restauración.
 - [ ] API y frontend pueden ejecutar Dockerfiles distintos desde el mismo repo.
 - [ ] El host soporta WebSocket/WSS.
 - [ ] Se pueden configurar healthchecks y secretos.
 - [ ] El costo de servicio siempre activo cabe en el presupuesto.
 - [ ] La región y latencia son aceptables para el ESP32.
+- [ ] Si la evaluación exige TimescaleDB literalmente, existe evidencia del entorno Docker local o de un proveedor compatible.
 
 ## Fuentes oficiales
+
+- [Supabase: TimescaleDB](https://supabase.com/docs/guides/database/extensions/timescaledb)
+- [Supabase: migrar de TimescaleDB a pg_partman](https://supabase.com/docs/guides/database/migrating-to-pg-partman)
 
 - [Tiger Cloud: crear servicio](https://docs.tigerdata.com/getting-started/latest/services/)
 - [Tiger Cloud: conexión PostgreSQL con psql](https://docs.tigerdata.com/integrations/latest/psql)

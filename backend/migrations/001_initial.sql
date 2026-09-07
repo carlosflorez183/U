@@ -1,6 +1,18 @@
 \set ON_ERROR_STOP on
 
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_available_extensions
+        WHERE name = 'timescaledb'
+    ) THEN
+        EXECUTE 'CREATE EXTENSION IF NOT EXISTS timescaledb';
+    ELSE
+        RAISE NOTICE 'TimescaleDB no está disponible; se usará PostgreSQL estándar.';
+    END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version VARCHAR(32) PRIMARY KEY,
@@ -89,12 +101,26 @@ CREATE TABLE IF NOT EXISTS sensor_measurements (
     boolean_value BOOLEAN,
     PRIMARY KEY(sample_id, sensor_id, measured_at)
 );
-SELECT create_hypertable(
-    'sensor_measurements',
-    by_range('measured_at', INTERVAL '7 days'),
-    if_not_exists => TRUE,
-    migrate_data => TRUE
-);
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_extension
+        WHERE extname = 'timescaledb'
+    ) THEN
+        EXECUTE $hypertable$
+            SELECT create_hypertable(
+                'sensor_measurements',
+                by_range('measured_at', INTERVAL '7 days'),
+                if_not_exists => TRUE,
+                migrate_data => TRUE
+            )
+        $hypertable$;
+    ELSE
+        RAISE NOTICE 'sensor_measurements permanecerá como tabla PostgreSQL estándar.';
+    END IF;
+END
+$$;
 CREATE INDEX IF NOT EXISTS sensor_measurements_sensor_time_idx
     ON sensor_measurements(sensor_id, measured_at DESC);
 CREATE INDEX IF NOT EXISTS sensor_measurements_sample_idx
@@ -202,7 +228,7 @@ END AS create_vw_powerbi_daily_summary \gset
 \if :create_vw_powerbi_daily_summary
 CREATE VIEW vw_powerbi_daily_summary AS
 SELECT
-    time_bucket(INTERVAL '1 day', measured_at) AS day,
+    date_trunc('day', measured_at, 'UTC') AS day,
     group_id,
     device_id,
     COUNT(*) AS sample_count,

@@ -28,7 +28,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Deben quedar saludables `postgres`, `api` y `frontend`; `migrate` debe terminar con código 0 después de aplicar `001_initial.sql` y `002_device_credentials.sql`.
+Deben quedar saludables `postgres`, `api` y `frontend`; `migrate` debe terminar con código 0 después de aplicar `001_initial.sql`, `002_device_credentials.sql` y `003_postgresql_portability.sql`.
 
 ## 2. URLs
 
@@ -167,7 +167,7 @@ docker compose exec postgres psql -U agro_iot -d agro_iot -c \
   "SELECT device_id, device_alias, inserted_by_alias, measured_at FROM vw_telemetry_wide ORDER BY measured_at DESC LIMIT 5;"
 ```
 
-Deben aparecer los marcadores `001_initial` y `002_device_credentials` y la hypertable `sensor_measurements`.
+Deben aparecer los marcadores `001_initial`, `002_device_credentials` y `003_postgresql_portability`. En el entorno Docker, `sensor_measurements` también debe aparecer como hypertable.
 
 ## 10. Exportaciones
 

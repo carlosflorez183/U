@@ -1,8 +1,8 @@
-# Modelo de datos PostgreSQL/TimescaleDB
+# Modelo de datos PostgreSQL portable
 
 ## 1. Resumen
 
-El esquema actual tiene **12 tablas físicas**, **12 claves foráneas documentadas**, **10 tablas IoT y de seguridad relacionadas**, **1 tabla de compatibilidad**, **1 tabla técnica**, **1 hypertable TimescaleDB** y **2 vistas**.
+El esquema actual tiene **12 tablas físicas**, **12 claves foráneas documentadas**, **10 tablas IoT y de seguridad relacionadas**, **1 tabla de compatibilidad**, **1 tabla técnica** y **2 vistas**. `sensor_measurements` se convierte en hypertable cuando TimescaleDB está disponible; en Supabase PostgreSQL 17 permanece como tabla estándar con índices temporales.
 
 ```text
 12 tablas físicas
@@ -130,7 +130,7 @@ Por conectividad directa, `devices`, `sensors` y `telemetry_samples` enlazan cua
 | `calibrations` | 2 | sensor e interpretación histórica |
 | `sample_quality_flags` | 2 | puente muestra–tipo de alerta |
 
-Con un periodo de cinco segundos, un dispositivo puede producir unas 17.280 muestras y 34.560 mediciones por día. Por eso `sensor_measurements`, no los catálogos, se convierte en hypertable.
+Con un periodo de cinco segundos, un dispositivo puede producir unas 17.280 muestras y 34.560 mediciones por día. Por eso `sensor_measurements` tiene índices temporales y se convierte en hypertable cuando TimescaleDB está disponible. En Supabase PostgreSQL 17 permanece como tabla estándar; si el volumen crece, se evaluará particionamiento después de medir consultas y retención reales.
 
 ## 4. Mapa de claves foráneas
 
@@ -181,7 +181,7 @@ Los snapshots no cambian si después se renombra el dispositivo o la credencial.
 
 #### `sensor_measurements`
 
-Contiene una fila por sensor y muestra. Su PK es `(sample_id, sensor_id, measured_at)`, valida ADC 0–4095 y porcentajes 0–100, y es la hypertable particionada por `measured_at` en intervalos de siete días.
+Contiene una fila por sensor y muestra. Su PK es `(sample_id, sensor_id, measured_at)` y valida ADC 0–4095 y porcentajes 0–100. La migración la convierte en hypertable por `measured_at` con intervalos de siete días cuando TimescaleDB está disponible; en Supabase PostgreSQL 17 conserva la misma PK e índices como tabla estándar.
 
 ### Calidad
 
@@ -203,7 +203,7 @@ La API key y el secret completos se entregan únicamente al emitir la credencial
 ### Compatibilidad y operación
 
 - **`legacy_records`:** objetos JSONB de la API v1; no participa en ingesta v2.
-- **`schema_migrations`:** marcadores `001_initial` y `002_device_credentials`.
+- **`schema_migrations`:** marcadores `001_initial`, `002_device_credentials` y `003_postgresql_portability`.
 
 ## 6. Flujo de administración e ingesta
 
@@ -244,7 +244,7 @@ La autenticación inicial ocurre antes del caso de uso y la credencial se revali
 
 ### `001_initial.sql`
 
-Crea TimescaleDB, el modelo inicial, catálogos, restricciones, índices, hypertable, vistas, compatibilidad v1 y `schema_migrations`.
+Crea el modelo inicial, catálogos, restricciones, índices, vistas, compatibilidad v1 y `schema_migrations`. Si `timescaledb` aparece en `pg_available_extensions`, habilita la extensión y convierte `sensor_measurements` en hypertable; en PostgreSQL 17 sin la extensión continúa con una tabla estándar.
 
 ### `002_device_credentials.sql`
 
@@ -257,9 +257,13 @@ En una transacción:
 5. reemplaza `vw_telemetry_wide` para exponer trazabilidad;
 6. registra `002_device_credentials`.
 
-## 8. TimescaleDB y vistas
+### `003_postgresql_portability.sql`
 
-Solo `sensor_measurements` es hypertable porque concentra el crecimiento temporal. `telemetry_samples` sigue siendo tabla PostgreSQL para mantener de forma sencilla la unicidad `(device_id, sequence)`.
+Reemplaza `vw_powerbi_daily_summary` aunque la vista ya exista, elimina su dependencia de `time_bucket`, fija el día analítico en UTC y registra `003_postgresql_portability`. Esta migración es necesaria para actualizar instalaciones creadas antes del soporte de PostgreSQL 17 estándar.
+
+## 8. Almacenamiento temporal y vistas
+
+`sensor_measurements` concentra el crecimiento temporal. Es una hypertable si TimescaleDB está habilitado y una tabla PostgreSQL estándar indexada en Supabase 17. `telemetry_samples` permanece como tabla PostgreSQL normal para mantener de forma sencilla la unicidad `(device_id, sequence)`.
 
 - **`vw_telemetry_wide`:** una fila por muestra con grupo, dispositivo, mediciones, estados, flags, snapshots, credencial y fingerprint.
 - **`vw_powerbi_daily_summary`:** resumen diario por grupo y dispositivo para KPIs.
@@ -327,16 +331,25 @@ WHERE tc.table_schema = 'public'
 ORDER BY child_table, foreign_key;
 ```
 
-### Verificar migraciones e hypertable
+### Verificar migraciones y almacenamiento temporal
 
 ```sql
 SELECT version, applied_at FROM schema_migrations ORDER BY version;
 
-SELECT hypertable_schema, hypertable_name, num_dimensions
-FROM timescaledb_information.hypertables
-WHERE hypertable_schema = 'public'
-  AND hypertable_name = 'sensor_measurements';
+SELECT to_regclass('public.sensor_measurements') AS measurements_table;
+
+SELECT indexname
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename = 'sensor_measurements'
+ORDER BY indexname;
+
+SELECT EXISTS (
+    SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'
+) AS timescaledb_enabled;
 ```
+
+Si `timescaledb_enabled` es verdadero, la hypertable puede comprobarse adicionalmente en `timescaledb_information.hypertables`. Esa consulta no debe ejecutarse en PostgreSQL estándar porque el esquema no existe.
 
 ### Comparar volumen por tabla
 
@@ -358,4 +371,16 @@ ORDER BY rows DESC;
 
 ## 12. Conclusión
 
-El modelo actual combina **10 tablas relacionadas**, `legacy_records` y `schema_migrations`, para un total de **12 tablas físicas**. `sensor_measurements` concentra el volumen y es la única hypertable; `telemetry_samples` implementa idempotencia y trazabilidad; `device_credentials` autentica dispositivos sin guardar secretos en claro. Las migraciones `001_initial` y `002_device_credentials` permiten evolucionar el esquema sin autoaprovisionar entidades durante la ingesta.
+El modelo actual combina **10 tablas relacionadas**, `legacy_records` y `schema_migrations`, para un total de **12 tablas físicas**. `sensor_measurements` concentra el volumen y usa índices PostgreSQL en todos los entornos, además de convertirse en hypertable cuando TimescaleDB está disponible; `telemetry_samples` implementa idempotencia y trazabilidad; `device_credentials` autentica dispositivos sin guardar secretos en claro. Las migraciones `001_initial`, `002_device_credentials` y `003_postgresql_portability` permiten evolucionar el esquema sin autoaprovisionar entidades durante la ingesta y mantienen un resumen diario portable con límites UTC.
+
+
+
+DATABASE_URL=postgresql://postgres.rmvsefuulzedscgifhiv:TU_CONTRASEÑA_SUPABASE@aws-0-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require
+DATABASE_POOL_MIN_SIZE=1
+DATABASE_POOL_MAX_SIZE=5
+CORS_ORIGINS=*
+MAX_TELEMETRY_BODY_BYTES=65536
+MAX_LEGACY_BODY_BYTES=1048576
+CREDENTIAL_PEPPER=3ae41fe9abfd4680e0eefe662a0c520d2a28d9fd371a5e416d783dfcfcfcfb16
+ADMIN_API_KEY=0ccc03f0d74df67e2b8cf8dade4ff665
+ADMIN_SECRET_KEY=81719c4d88d3406b2e98e3b5ef0cce7d92b638849a68ca40

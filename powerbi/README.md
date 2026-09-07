@@ -2,7 +2,7 @@
 
 El parcial exige un `.pbix` conectado directamente a PostgreSQL. Power BI Desktop sólo está disponible en Windows; ejecuta estos pasos allí y guarda el resultado como `dashboard_agro_iot.pbix` en esta carpeta.
 
-Para publicar PostgreSQL/TimescaleDB, FastAPI y Streamlit y conectar Power BI mediante TLS, sigue primero la [guía de alojamiento cloud y Power BI](../docs/ALOJAMIENTO_CLOUD_POWER_BI.md).
+Para publicar PostgreSQL (con TimescaleDB opcional), FastAPI y Streamlit y conectar Power BI mediante TLS, sigue primero la [guía de alojamiento cloud y Power BI](../docs/ALOJAMIENTO_CLOUD_POWER_BI.md).
 
 ## Conexión
 

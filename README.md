@@ -1,11 +1,11 @@
 # Monitoreo agrícola IoT
 
-Solución integral para recolectar y analizar datos de un sensor capacitivo de humedad del suelo y un sensor de lluvia conectados a un ESP32. Incluye FastAPI con DDD, PostgreSQL/TimescaleDB, Streamlit en tiempo real, exportaciones y artefactos para Power BI.
+Solución integral para recolectar y analizar datos de un sensor capacitivo de humedad del suelo y un sensor de lluvia conectados a un ESP32. Incluye FastAPI con DDD, PostgreSQL 17 compatible con Supabase, TimescaleDB opcional, Streamlit en tiempo real, exportaciones y artefactos para Power BI.
 
 ## Componentes
 
 - `backend/`: dominio, casos de uso, API FastAPI y adaptadores PostgreSQL.
-- `backend/migrations/`: esquema idempotente con 12 tablas, credenciales hasheadas y TimescaleDB.
+- `backend/migrations/`: esquema idempotente y portable con 12 tablas, credenciales hasheadas y uso opcional de TimescaleDB cuando la extensión está disponible.
 - `frontend/`: Streamlit con filtros, WebSocket, EDA, anomalías y dos algoritmos.
 - `firmware/`: sketch ESP32 con WiFi, LCD I2C y POST JSON.
 - `powerbi/`: conexión, consultas y medidas para construir el `.pbix`.
@@ -49,7 +49,7 @@ La consulta y exportación aceptan grupo, dispositivo, fechas, variable y rango.
 
 ## Base de datos
 
-El esquema contiene 12 tablas; diez forman el modelo IoT y seguridad relacionado. `device_credentials` vincula claves hasheadas con dispositivos y `telemetry_samples` conserva el alias autor. `sensor_measurements` es una hypertable TimescaleDB. `vw_telemetry_wide` es la fuente estable para API y Power BI, y `vw_powerbi_daily_summary` resume indicadores diarios.
+El esquema contiene 12 tablas; diez forman el modelo IoT y seguridad relacionado. `device_credentials` vincula claves hasheadas con dispositivos y `telemetry_samples` conserva el alias autor. `sensor_measurements` funciona como tabla PostgreSQL indexada en Supabase 17 y como hypertable cuando TimescaleDB está disponible. `vw_telemetry_wide` es la fuente estable para API y Power BI, y `vw_powerbi_daily_summary` resume indicadores diarios con límites fijados en UTC.
 
 ## Documentación
 
