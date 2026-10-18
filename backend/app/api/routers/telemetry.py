@@ -26,7 +26,9 @@ from app.application.telemetry_service import TelemetryService
 from app.domain.auth import IngestPrincipal
 
 router = APIRouter(prefix="/api/v2/telemetry", tags=["Telemetría IoT"])
-TelemetryVariable = Literal["soil_percent", "rain_percent", "soil_adc", "rain_adc"]
+TelemetryVariable = Literal[
+    "temperature", "humidity", "soil_percent", "rain_percent", "soil_adc", "rain_adc"
+]
 
 
 @router.post("/samples", response_model=TelemetrySampleResponse, status_code=status.HTTP_201_CREATED)
@@ -44,11 +46,8 @@ async def ingest_sample(
         device_id=payload.device_id,
         measured_at=payload.measured_at,
         sampling_period_seconds=payload.sampling_period_seconds,
-        soil_raw_adc=payload.soil_moisture.raw_adc,
-        soil_percent=payload.soil_moisture.percent,
-        rain_raw_adc=payload.rain.raw_adc,
-        rain_wetness_percent=payload.rain.wetness_percent,
-        rain_detected=payload.rain.detected,
+        temperature_celsius=payload.ambient.temperature_celsius,
+        humidity_percent=payload.ambient.humidity_percent,
         principal=principal,
     )
     try:

@@ -11,17 +11,17 @@ from typing import Final
 import streamlit as st
 
 COLORS: Final[dict[str, str]] = {
-    "soil": "#2F6B45",
-    "soil_soft": "#E7F0E6",
-    "rain": "#2F6FA3",
-    "rain_soft": "#E5EFF7",
-    "sun": "#C58A2A",
-    "danger": "#B44A3A",
-    "ink": "#1F2A22",
-    "muted": "#647067",
-    "canvas": "#FBF8F1",
-    "surface": "#F1F4EA",
-    "border": "#D8E0D3",
+    "soil": "#38BDF8",
+    "soil_soft": "#0C4A6E",
+    "rain": "#A78BFA",
+    "rain_soft": "#2E1065",
+    "sun": "#FBBF24",
+    "danger": "#F87171",
+    "ink": "#F1F5F9",
+    "muted": "#94A3B8",
+    "canvas": "#0F172A",
+    "surface": "#1E293B",
+    "border": "#334155",
 }
 
 _STATUS_ICONS: Final[dict[str, str]] = {
@@ -39,25 +39,26 @@ def apply_app_style() -> None:
         """
         <style>
         :root {
-            --agri-soil: #2F6B45;
-            --agri-rain: #2F6FA3;
-            --agri-sun: #C58A2A;
-            --agri-ink: #1F2A22;
-            --agri-muted: #647067;
-            --agri-canvas: #FBF8F1;
-            --agri-surface: #F1F4EA;
-            --agri-border: #D8E0D3;
+            --agri-soil: #38BDF8;
+            --agri-rain: #A78BFA;
+            --agri-sun: #FBBF24;
+            --agri-ink: #F1F5F9;
+            --agri-muted: #94A3B8;
+            --agri-canvas: #0F172A;
+            --agri-surface: #1E293B;
+            --agri-border: #334155;
         }
 
         [data-testid="stAppViewContainer"] {
             background:
-                radial-gradient(circle at 92% 2%, rgba(197, 138, 42, 0.10), transparent 24rem),
+                radial-gradient(circle at 8% 0%, rgba(56, 189, 248, 0.14), transparent 26rem),
+                radial-gradient(circle at 95% 10%, rgba(167, 139, 250, 0.12), transparent 24rem),
                 var(--agri-canvas);
         }
 
         [data-testid="stHeader"] {
-            background: rgba(251, 248, 241, 0.92);
-            border-bottom: 1px solid rgba(216, 224, 211, 0.8);
+            background: rgba(15, 23, 42, 0.92);
+            border-bottom: 1px solid rgba(51, 65, 85, 0.9);
         }
 
         [data-testid="stMainBlockContainer"] {
@@ -67,13 +68,15 @@ def apply_app_style() -> None:
         }
 
         [data-testid="stVerticalBlockBorderWrapper"] {
-            background: rgba(255, 255, 255, 0.62);
-            box-shadow: 0 8px 24px rgba(31, 42, 34, 0.035);
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid rgba(51, 65, 85, 0.9);
+            box-shadow: 0 10px 28px rgba(2, 6, 23, 0.45);
         }
 
         [data-testid="stMetric"] {
-            background: rgba(255, 255, 255, 0.72);
-            box-shadow: 0 5px 16px rgba(31, 42, 34, 0.04);
+            background: linear-gradient(160deg, rgba(30, 41, 59, 0.95), rgba(12, 74, 110, 0.55));
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            box-shadow: 0 8px 22px rgba(2, 6, 23, 0.5);
         }
 
         [data-testid="stMetricLabel"] {
@@ -94,23 +97,25 @@ def apply_app_style() -> None:
             overflow: hidden;
             padding: clamp(1.35rem, 3vw, 2.25rem);
             margin: 0.25rem 0 1.35rem;
-            border: 1px solid var(--agri-border);
-            border-radius: 1rem;
+            border: 1px solid rgba(56, 189, 248, 0.30);
+            border-radius: 1.25rem;
+            border-left: 6px solid var(--agri-soil);
             background:
-                linear-gradient(120deg, rgba(255, 255, 255, 0.94), rgba(231, 240, 230, 0.86)),
+                linear-gradient(115deg, rgba(15, 23, 42, 0.96), rgba(30, 58, 95, 0.88)),
                 var(--agri-surface);
-            box-shadow: 0 14px 36px rgba(47, 107, 69, 0.08);
+            box-shadow: 0 16px 40px rgba(2, 6, 23, 0.55);
         }
 
         .agri-hero::after {
             content: "";
             position: absolute;
-            width: 12rem;
-            height: 12rem;
-            right: -4rem;
-            top: -5rem;
-            border-radius: 50%;
-            background: rgba(47, 111, 163, 0.09);
+            width: 16rem;
+            height: 6rem;
+            right: -2rem;
+            top: -2rem;
+            transform: rotate(-12deg);
+            border-radius: 0.75rem;
+            background: linear-gradient(90deg, rgba(56, 189, 248, 0.25), rgba(167, 139, 250, 0.22));
         }
 
         .agri-hero__topline {
@@ -125,16 +130,16 @@ def apply_app_style() -> None:
             color: var(--agri-soil);
             font-size: 0.78rem;
             font-weight: 750;
-            letter-spacing: 0.09em;
+            letter-spacing: 0.14em;
             text-transform: uppercase;
         }
 
         .agri-hero__status {
             padding: 0.25rem 0.55rem;
-            border: 1px solid rgba(47, 107, 69, 0.22);
-            border-radius: 999px;
-            color: var(--agri-soil);
-            background: rgba(231, 240, 230, 0.76);
+            border: 1px solid rgba(56, 189, 248, 0.40);
+            border-radius: 0.5rem;
+            color: #E0F2FE;
+            background: rgba(12, 74, 110, 0.65);
             font-size: 0.75rem;
             font-weight: 700;
         }
@@ -189,9 +194,9 @@ def apply_app_style() -> None:
             line-height: 1.7;
         }
 
-        .agri-status--positive .agri-status__icon { color: var(--agri-soil); }
+        .agri-status--positive .agri-status__icon { color: #34D399; }
         .agri-status--warning .agri-status__icon { color: var(--agri-sun); }
-        .agri-status--danger .agri-status__icon { color: #B44A3A; }
+        .agri-status--danger .agri-status__icon { color: #F87171; }
         .agri-status strong { color: var(--agri-ink); }
         .agri-status small { display: block; margin-top: 0.1rem; color: var(--agri-muted); }
 
@@ -199,7 +204,7 @@ def apply_app_style() -> None:
             padding: 1rem 1.1rem;
             border: 1px dashed var(--agri-border);
             border-radius: 0.8rem;
-            background: rgba(241, 244, 234, 0.7);
+            background: rgba(30, 41, 59, 0.85);
         }
 
         .agri-empty strong { color: var(--agri-ink); }

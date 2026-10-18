@@ -6,16 +6,16 @@ Ajusta el nombre de tabla si Power BI lo importa con otro alias.
 Total Muestras =
 COUNTROWS(vw_telemetry_wide)
 
-Humedad Suelo Promedio =
-AVERAGE(vw_telemetry_wide[soil_moisture_percent])
+Temperatura Promedio =
+AVERAGE(vw_telemetry_wide[temperature_celsius])
 
-Humedad Lluvia Promedio =
-AVERAGE(vw_telemetry_wide[rain_wetness_percent])
+Humedad Promedio =
+AVERAGE(vw_telemetry_wide[humidity_percent])
 
-Detecciones de Lluvia =
+Muestras Humedas (>=70%) =
 CALCULATE(
     COUNTROWS(vw_telemetry_wide),
-    vw_telemetry_wide[rain_detected] = TRUE()
+    vw_telemetry_wide[humidity_percent] >= 70
 )
 
 Última Medición =

@@ -13,10 +13,8 @@ from services import get_api_client
 from ui import COLORS, render_empty_state, render_section_intro, render_status
 
 _VARIABLES = {
-    "Humedad del suelo (%)": ("soil_percent", "Humedad suelo (%)", 0.0, 100.0, 0.5),
-    "Humedad de lluvia (%)": ("rain_percent", "Lluvia (%)", 0.0, 100.0, 0.5),
-    "ADC del suelo": ("soil_adc", "ADC suelo", 0, 4095, 1),
-    "ADC de lluvia": ("rain_adc", "ADC lluvia", 0, 4095, 1),
+    "Temperatura (°C)": ("temperature", "Temperatura (°C)", -40.0, 80.0, 0.5),
+    "Humedad relativa (%)": ("humidity", "Humedad (%)", 0.0, 100.0, 0.5),
 }
 
 
@@ -233,39 +231,48 @@ def live_dashboard() -> None:
                 tone="neutral",
             )
 
-    soil_delta = (
-        f"{latest['Humedad suelo (%)'] - previous['Humedad suelo (%)']:+.1f} pp"
+    temp_delta = (
+        f"{latest['Temperatura (°C)'] - previous['Temperatura (°C)']:+.1f} °C"
         if comparable_previous
         else None
     )
-    rain_delta = (
-        f"{latest['Lluvia (%)'] - previous['Lluvia (%)']:+.1f} pp"
+    hum_delta = (
+        f"{latest['Humedad (%)'] - previous['Humedad (%)']:+.1f} pp"
         if comparable_previous
         else None
     )
+    _ESTADOS_ES = {
+        "COLD": "Frío",
+        "COMFORT": "Confortable",
+        "HOT": "Caliente",
+        "DRY": "Seco",
+        "HUMID": "Húmedo",
+    }
+    estado_temp = _ESTADOS_ES.get(str(latest["Estado temp."]), str(latest["Estado temp."]))
+    estado_hum = _ESTADOS_ES.get(str(latest["Estado humedad"]), str(latest["Estado humedad"]))
     metrics = st.columns(4)
     metrics[0].metric(
-        "Humedad del suelo",
-        f"{latest['Humedad suelo (%)']:.1f} %",
-        delta=soil_delta,
+        "Temperatura",
+        f"{latest['Temperatura (°C)']:.1f} °C",
+        delta=temp_delta,
         border=True,
     )
     metrics[1].metric(
-        "Estado del suelo",
-        str(latest["Estado suelo"]),
+        "Estado temp.",
+        estado_temp,
         delta=f"Secuencia {latest['Secuencia']}",
         delta_color="off",
         border=True,
     )
     metrics[2].metric(
-        "Superficie mojada",
-        f"{latest['Lluvia (%)']:.1f} %",
-        delta=rain_delta,
+        "Humedad relativa",
+        f"{latest['Humedad (%)']:.1f} %",
+        delta=hum_delta,
         border=True,
     )
     metrics[3].metric(
-        "Lluvia",
-        "Detectada" if latest["Lluvia detectada"] else "Sin lluvia",
+        "Estado humedad",
+        estado_hum,
         delta="Estado actual",
         delta_color="off",
         border=True,
@@ -284,12 +291,11 @@ def live_dashboard() -> None:
 
     with chart_tab:
         render_section_intro(
-            "Series de sensores",
-            "Verde para humedad del suelo y azul para humedad superficial del sensor de lluvia.",
+            "Series DHT22",
+            "Verde para temperatura y azul para humedad relativa del aire.",
         )
         st.line_chart(
-            frame.set_index("Fecha")[["Humedad suelo (%)", "Lluvia (%)"]],
-            y_label="Porcentaje (%)",
+            frame.set_index("Fecha")[["Temperatura (°C)", "Humedad (%)"]],
             color=[COLORS["soil"], COLORS["rain"]],
         )
 
@@ -374,6 +380,24 @@ def live_dashboard() -> None:
 def _to_frame(samples: list[dict]) -> pd.DataFrame:
     rows = []
     for sample in reversed(samples):
+        ambient = sample.get("ambient") or {}
+        # Compat con API antigua suelo/lluvia.
+        if not ambient:
+            soil = sample.get("soil_moisture") or {}
+            rain = sample.get("rain") or {}
+            ambient = {
+                "temperature_celsius": 22.0,
+                "humidity_percent": float(soil.get("percent", rain.get("wetness_percent", 0.0))),
+            }
+        _es = {
+            "COLD": "Frío",
+            "COMFORT": "Confortable",
+            "HOT": "Caliente",
+            "DRY": "Seco",
+            "HUMID": "Húmedo",
+        }
+        estado_temp = sample.get("temp_status", sample.get("soil_status", ""))
+        estado_hum = sample.get("humidity_status", sample.get("soil_status", ""))
         rows.append(
             {
                 "ID": sample["id"],
@@ -381,13 +405,11 @@ def _to_frame(samples: list[dict]) -> pd.DataFrame:
                 "Grupo": sample["group_id"],
                 "Dispositivo": sample["device_id"],
                 "Secuencia": sample["sequence"],
-                "Humedad suelo (%)": sample["soil_moisture"]["percent"],
-                "ADC suelo": sample["soil_moisture"]["raw_adc"],
-                "Estado suelo": sample["soil_status"],
-                "Lluvia (%)": sample["rain"]["wetness_percent"],
-                "ADC lluvia": sample["rain"]["raw_adc"],
-                "Lluvia detectada": sample["rain"]["detected"],
-                "Calidad": ", ".join(sample["quality_flags"]) or "OK",
+                "Temperatura (°C)": float(ambient.get("temperature_celsius", 0.0)),
+                "Humedad (%)": float(ambient.get("humidity_percent", 0.0)),
+                "Estado temp.": _es.get(str(estado_temp), str(estado_temp)),
+                "Estado humedad": _es.get(str(estado_hum), str(estado_hum)),
+                "Calidad": ", ".join(sample.get("quality_flags", [])) or "OK",
             }
         )
     return pd.DataFrame(rows)

@@ -12,6 +12,9 @@ from app.domain.auth import IngestPrincipal
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$")
 _VARIABLE_RANGES: dict[str, tuple[float, float]] = {
+    "temperature": (-40.0, 80.0),
+    "humidity": (0.0, 100.0),
+    # Compat: filtros antiguos siguen aceptados y se mapean a humedad.
     "soil_percent": (0.0, 100.0),
     "rain_percent": (0.0, 100.0),
     "soil_adc": (0.0, 4095.0),
@@ -29,19 +32,22 @@ class CreateRecordCommand:
 
 @dataclass(frozen=True, slots=True)
 class IngestTelemetryCommand:
-    """Muestra tipada recibida desde un dispositivo ESP32."""
+    """Muestra tipada recibida desde un dispositivo ESP32-DHT22."""
 
     schema_version: str
     group_id: str
     device_id: str
     measured_at: datetime
     sampling_period_seconds: int
-    soil_raw_adc: int
-    soil_percent: float
-    rain_raw_adc: int
-    rain_wetness_percent: float
-    rain_detected: bool
+    temperature_celsius: float
+    humidity_percent: float
     principal: IngestPrincipal
+    # Compat: campos antiguos opcionales, se ignoran si llega ambient.
+    soil_raw_adc: int | None = None
+    soil_percent: float | None = None
+    rain_raw_adc: int | None = None
+    rain_wetness_percent: float | None = None
+    rain_detected: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

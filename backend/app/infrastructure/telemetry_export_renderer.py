@@ -1,4 +1,4 @@
-"""Exportación de telemetría IoT a JSON, CSV, Excel y PDF."""
+"""Exportación de telemetría ambiental DHT22 a JSON, CSV, Excel y PDF."""
 
 from __future__ import annotations
 
@@ -27,19 +27,16 @@ _COLUMNS = (
     "measured_at",
     "received_at",
     "sampling_period_seconds",
-    "soil_raw_adc",
-    "soil_moisture_percent",
-    "soil_status",
-    "rain_raw_adc",
-    "rain_wetness_percent",
-    "rain_detected",
-    "rain_status",
+    "temperature_celsius",
+    "humidity_percent",
+    "temp_status",
+    "humidity_status",
     "quality_flags",
 )
 
 
 class FileTelemetryExportRenderer:
-    """Genera archivos con columnas estables para análisis agrícola."""
+    """Genera archivos con columnas estables para análisis ambiental."""
 
     def render(
         self, samples: Sequence[TelemetrySample], export_format: ExportFormat
@@ -86,7 +83,7 @@ class FileTelemetryExportRenderer:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="2E7D32")
         sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = f"A1:O{max(1, len(rows) + 1)}"
+        sheet.auto_filter.ref = f"A1:L{max(1, len(rows) + 1)}"
         for row in rows:
             sheet.append([_safe_cell(row[column]) for column in _COLUMNS])
         for index, column in enumerate(_COLUMNS, start=1):
@@ -108,21 +105,21 @@ class FileTelemetryExportRenderer:
             rightMargin=1 * cm,
             topMargin=1 * cm,
             bottomMargin=1 * cm,
-            title="Telemetría agrícola IoT",
+            title="Telemetría ambiental IoT DHT22",
         )
         styles = getSampleStyleSheet()
-        story = [Paragraph("Telemetría agrícola IoT", styles["Title"]), Spacer(1, 0.3 * cm)]
-        headers = ["Fecha", "Dispositivo", "Humedad %", "Suelo", "Lluvia %", "Detectada", "Calidad"]
+        story = [Paragraph("Telemetría ambiental IoT DHT22", styles["Title"]), Spacer(1, 0.3 * cm)]
+        headers = ["Fecha", "Dispositivo", "Temp °C", "Hum %", "Estado T", "Estado H", "Calidad"]
         data = [headers]
         for row in rows:
             data.append(
                 [
                     row["measured_at"],
                     row["device_id"],
-                    f'{row["soil_moisture_percent"]:.1f}',
-                    row["soil_status"],
-                    f'{row["rain_wetness_percent"]:.1f}',
-                    "Sí" if row["rain_detected"] else "No",
+                    f'{row["temperature_celsius"]:.1f}',
+                    f'{row["humidity_percent"]:.1f}',
+                    row["temp_status"],
+                    row["humidity_status"],
                     row["quality_flags"] or "OK",
                 ]
             )
@@ -157,13 +154,10 @@ def _to_row(sample: TelemetrySample) -> dict:
         "measured_at": _iso(sample.measured_at),
         "received_at": _iso(sample.received_at),
         "sampling_period_seconds": sample.sampling_period_seconds,
-        "soil_raw_adc": sample.soil_moisture.raw_adc,
-        "soil_moisture_percent": sample.soil_moisture.percent,
-        "soil_status": sample.soil_status,
-        "rain_raw_adc": sample.rain.raw_adc,
-        "rain_wetness_percent": sample.rain.wetness_percent,
-        "rain_detected": sample.rain.detected,
-        "rain_status": sample.rain_status,
+        "temperature_celsius": sample.ambient.temperature_celsius,
+        "humidity_percent": sample.ambient.humidity_percent,
+        "temp_status": sample.temp_status,
+        "humidity_status": sample.humidity_status,
         "quality_flags": ",".join(sample.quality_flags),
     }
 

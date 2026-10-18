@@ -25,12 +25,20 @@ class PredictionTests(unittest.TestCase):
     def _samples(self, count: int = 40) -> list[dict[str, object]]:
         rng = np.random.default_rng(20250308)
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        soil = 45.0
+        humidity = 60.0
         samples: list[dict[str, object]] = []
         for sequence in range(count):
-            rain = float(20 + 5 * np.sin(sequence / 4))
-            detected = rain > 22
-            soil = float(np.clip(0.9 * soil + 0.08 * rain + rng.normal(0, 0.15), 0, 100))
+            humidity = float(
+                np.clip(
+                    0.9 * humidity
+                    + 0.08 * (20 + 5 * np.sin(sequence / 4))
+                    + rng.normal(0, 0.15),
+                    0,
+                    100,
+                )
+            )
+            temperature = float(22 + 3 * np.sin(sequence / 6) + rng.normal(0, 0.1))
+            temperature = float(np.clip(temperature, -40, 80))
             samples.append(
                 {
                     "id": f"sample-{sequence}",
@@ -38,10 +46,9 @@ class PredictionTests(unittest.TestCase):
                     "sequence": sequence,
                     "measured_at": (start + timedelta(seconds=5 * sequence)).isoformat(),
                     "sampling_period_seconds": 5,
-                    "soil_moisture": {"percent": soil},
-                    "rain": {
-                        "wetness_percent": rain,
-                        "detected": bool(detected),
+                    "ambient": {
+                        "temperature_celsius": temperature,
+                        "humidity_percent": humidity,
                     },
                     "quality_flags": ["synthetic"] if sequence == 3 else [],
                 }
@@ -125,7 +132,10 @@ class PredictionTests(unittest.TestCase):
 
     def test_nan_and_insufficient_data_are_rejected(self) -> None:
         samples = self._samples(5)
-        samples[2]["soil_moisture"] = {"percent": float("nan")}
+        samples[2]["ambient"] = {
+            "temperature_celsius": 22.0,
+            "humidity_percent": float("nan"),
+        }
         with self.assertRaises(PredictionValidationError):
             samples_to_frame(samples)
         with self.assertRaises(PredictionValidationError):

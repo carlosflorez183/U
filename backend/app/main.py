@@ -11,14 +11,17 @@ from psycopg import Error as PostgresError
 from app.api.error_handling import ErrorHandlingMiddleware, install_exception_handlers
 from app.api.realtime import RecordEventHub
 from app.api.routers.admin import router as admin_router
+from app.api.routers.menu import router as menu_router
 from app.api.routers.records import router as records_router
 from app.api.routers.telemetry import router as telemetry_router
 from app.application.admin_service import AdminService, IngestAuthenticator
+from app.application.menu_service import MenuService
 from app.application.services import RecordService
 from app.application.telemetry_service import TelemetryService
 from app.infrastructure.config import Settings
 from app.infrastructure.database import PostgresDatabase
 from app.infrastructure.postgres_admin_repository import PostgresAdminRepository
+from app.infrastructure.postgres_menu_repository import PostgresMenuRepository
 from app.infrastructure.postgres_record_repository import PostgresRecordRepository
 from app.infrastructure.postgres_telemetry_repository import PostgresTelemetryRepository
 from app.infrastructure.record_export_renderer import FileRecordExportRenderer
@@ -59,6 +62,7 @@ async def lifespan(app: FastAPI):
         app.state.telemetry_service = TelemetryService(
             PostgresTelemetryRepository(database), FileTelemetryExportRenderer()
         )
+        app.state.menu_service = MenuService(PostgresMenuRepository(database))
         event_hub = RecordEventHub()
         app.state.record_event_hub = event_hub
         yield
@@ -73,11 +77,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="API de monitoreo agrícola IoT",
-    version="3.1.0",
+    title="API de estación climática IoT",
+    version="3.2.0",
     description=(
-        "Ingesta y consulta de humedad capacitiva del suelo y detección de lluvia "
-        "sobre PostgreSQL/TimescaleDB. La API v1 se conserva por compatibilidad."
+        "Ingesta y consulta de temperatura y humedad del aire (DHT22) sobre "
+        "PostgreSQL/TimescaleDB, con analítica para el menú del teclado matricial. "
+        "La API v1 se conserva por compatibilidad."
     ),
     lifespan=lifespan,
 )
@@ -104,6 +109,7 @@ app.add_middleware(
     max_legacy_body_bytes=settings.max_legacy_body_bytes,
 )
 app.include_router(telemetry_router)
+app.include_router(menu_router)
 app.include_router(admin_router)
 app.include_router(records_router, deprecated=True)
 

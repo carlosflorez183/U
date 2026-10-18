@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.realtime import RecordEventHub
 from app.application.admin_service import AdminService, IngestAuthenticator
 from app.application.errors import AuthenticationError
+from app.application.menu_service import MenuService
 from app.application.services import RecordService
 from app.application.telemetry_service import TelemetryService
 from app.domain.auth import IngestPrincipal
@@ -29,6 +30,11 @@ def get_record_event_hub(request: Request) -> RecordEventHub:
 def get_telemetry_service(request: Request) -> TelemetryService:
     """Recupera los casos de uso de telemetría configurados en la API."""
     return request.app.state.telemetry_service
+
+
+def get_menu_service(request: Request) -> MenuService:
+    """Recupera los casos de uso del menú del teclado matricial."""
+    return request.app.state.menu_service
 
 
 def get_admin_service(request: Request) -> AdminService:

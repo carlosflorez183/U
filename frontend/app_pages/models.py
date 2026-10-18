@@ -44,8 +44,8 @@ def _built_in_demo_frame(start: datetime, end: datetime) -> pd.DataFrame:
 
     samples: list[dict[str, object]] = []
     for sequence, measured_at in enumerate(timestamps):
-        soil_percent = 15.0 + (sequence % 30) * 2.5
-        rain_detected = 37.5 <= soil_percent <= 57.5 and sequence % 5 != 0
+        humidity = 35.0 + (sequence % 40) * 1.5
+        temperature = 20.0 + (sequence % 20) * 0.5
         samples.append(
             {
                 "id": f"model-demo-{sequence}",
@@ -53,10 +53,9 @@ def _built_in_demo_frame(start: datetime, end: datetime) -> pd.DataFrame:
                 "sequence": sequence,
                 "measured_at": measured_at.isoformat(),
                 "sampling_period_seconds": 5,
-                "soil_moisture": {"percent": soil_percent},
-                "rain": {
-                    "wetness_percent": 68.0 if rain_detected else 3.0,
-                    "detected": rain_detected,
+                "ambient": {
+                    "temperature_celsius": float(temperature),
+                    "humidity_percent": float(humidity),
                 },
                 "quality_flags": [],
             }
@@ -92,7 +91,7 @@ def load_demo_data(
 
 
 render_section_intro(
-    "¿Lloverá según la humedad del suelo?",
+    "¿Humedad alta según DHT22?",
     "Selecciona el periodo y escribe la humedad actual. El resto se calcula automáticamente.",
 )
 
@@ -108,10 +107,10 @@ with st.form("simple_rain_demo_form", border=True):
         horizontal=True,
     )
     soil_percent = st.number_input(
-        "Humedad actual del suelo (%)",
+        "Humedad relativa actual (%)",
         min_value=0.0,
         max_value=100.0,
-        value=45.0,
+        value=65.0,
         step=0.5,
     )
     submitted = st.form_submit_button(

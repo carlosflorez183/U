@@ -47,20 +47,38 @@ class PostgresAdminRepository:
                 ).fetchone()
                 if row is None:
                     raise ResourceConflictError("El dispositivo ya está registrado.")
-                self._create_default_sensor(
-                    connection,
-                    device_uuid=row["id"],
-                    sensor_type="soil_moisture",
-                    external_id="soil-capacitive",
-                    pin="GPIO34",
-                )
-                self._create_default_sensor(
-                    connection,
-                    device_uuid=row["id"],
-                    sensor_type="rain_wetness",
-                    external_id="rain-board",
-                    pin="GPIO35/GPIO27",
-                )
+                # DHT22 ambiental: temperatura + humedad. Fallback a tipos
+                # antiguos si la migración 004 aún no corrió.
+                try:
+                    self._create_default_sensor(
+                        connection,
+                        device_uuid=row["id"],
+                        sensor_type="temperature",
+                        external_id="dht22-temp",
+                        pin="GPIO4",
+                    )
+                    self._create_default_sensor(
+                        connection,
+                        device_uuid=row["id"],
+                        sensor_type="humidity",
+                        external_id="dht22-hum",
+                        pin="GPIO4",
+                    )
+                except RuntimeError:
+                    self._create_default_sensor(
+                        connection,
+                        device_uuid=row["id"],
+                        sensor_type="soil_moisture",
+                        external_id="soil-capacitive",
+                        pin="GPIO34",
+                    )
+                    self._create_default_sensor(
+                        connection,
+                        device_uuid=row["id"],
+                        sensor_type="rain_wetness",
+                        external_id="rain-board",
+                        pin="GPIO35/GPIO27",
+                    )
         return ManagedDevice(
             id=str(row["id"]),
             group_id=group_id,

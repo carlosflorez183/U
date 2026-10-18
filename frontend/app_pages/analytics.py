@@ -12,10 +12,8 @@ from services import get_api_client
 from ui import COLORS, render_empty_state, render_section_intro, render_status
 
 _VARIABLES = {
-    "Humedad del suelo (%)": ("soil_percent", "soil_percent", 0.0, 100.0, 0.5),
-    "Humedad de lluvia (%)": ("rain_percent", "rain_percent", 0.0, 100.0, 0.5),
-    "ADC del suelo": ("soil_adc", "soil_adc", 0, 4095, 1),
-    "ADC de lluvia": ("rain_adc", "rain_adc", 0, 4095, 1),
+    "Temperatura (°C)": ("temperature", "temperature", -40.0, 80.0, 0.5),
+    "Humedad relativa (%)": ("humidity", "humidity", 0.0, 100.0, 0.5),
 }
 
 
@@ -41,6 +39,19 @@ def load_analysis_data(
         min_value=min_value,
         max_value=max_value,
     )
+    def _ambient(item: dict) -> dict:
+        amb = item.get("ambient") or {}
+        if amb:
+            return amb
+        soil = item.get("soil_moisture") or {}
+        rain = item.get("rain") or {}
+        return {
+            "temperature_celsius": 22.0,
+            "humidity_percent": float(
+                soil.get("percent", rain.get("wetness_percent", 0.0))
+            ),
+        }
+
     return pd.DataFrame(
         [
             {
@@ -48,12 +59,9 @@ def load_analysis_data(
                 "fecha": pd.to_datetime(item["measured_at"], utc=True),
                 "grupo": item["group_id"],
                 "dispositivo": item["device_id"],
-                "soil_percent": item["soil_moisture"]["percent"],
-                "soil_adc": item["soil_moisture"]["raw_adc"],
-                "rain_percent": item["rain"]["wetness_percent"],
-                "rain_adc": item["rain"]["raw_adc"],
-                "rain_detected": int(item["rain"]["detected"]),
-                "quality_flags": ",".join(item["quality_flags"]),
+                "temperature": float(_ambient(item).get("temperature_celsius", 0.0)),
+                "humidity": float(_ambient(item).get("humidity_percent", 0.0)),
+                "quality_flags": ",".join(item.get("quality_flags", [])),
             }
             for item in reversed(samples)
         ]
@@ -157,7 +165,7 @@ if raw_data.empty:
     )
     st.stop()
 
-numeric_columns = ["soil_percent", "soil_adc", "rain_percent", "rain_adc"]
+numeric_columns = ["temperature", "humidity"]
 duplicates = int(raw_data.duplicated(subset=["id"]).sum())
 missing_before = int(raw_data[numeric_columns].isna().sum().sum())
 data = raw_data.drop_duplicates(subset=["id"]).copy()
@@ -212,7 +220,7 @@ q3 = data[variable_column].quantile(0.75)
 iqr = q3 - q1
 lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
 outliers = data[(data[variable_column] < lower) | (data[variable_column] > upper)]
-series_color = COLORS["soil"] if variable_column.startswith("soil") else COLORS["rain"]
+series_color = COLORS["soil"] if variable_column.startswith("temp") else COLORS["rain"]
 
 temporal_tab, stats_tab, correlation_tab, distribution_tab, outliers_tab = st.tabs(
     [

@@ -7,9 +7,8 @@ from app.application.errors import AuthorizationError
 from app.application.exports import ExportFormat, ExportedFile, TelemetryExportRenderer
 from app.domain.repositories import TelemetryRepository
 from app.domain.telemetry import (
+    AmbientReading,
     PendingTelemetrySample,
-    RainReading,
-    SoilMoistureReading,
     TelemetrySample,
 )
 
@@ -37,14 +36,9 @@ class TelemetryService:
             device_id=command.device_id,
             measured_at=command.measured_at,
             sampling_period_seconds=command.sampling_period_seconds,
-            soil_moisture=SoilMoistureReading(
-                raw_adc=command.soil_raw_adc,
-                percent=command.soil_percent,
-            ),
-            rain=RainReading(
-                raw_adc=command.rain_raw_adc,
-                wetness_percent=command.rain_wetness_percent,
-                detected=command.rain_detected,
+            ambient=AmbientReading(
+                temperature_celsius=command.temperature_celsius,
+                humidity_percent=command.humidity_percent,
             ),
             device_alias=principal.device_alias,
             inserted_by_alias=principal.credential_alias,

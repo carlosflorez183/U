@@ -26,6 +26,9 @@ _REQUIRED_FRAME_COLUMNS = {
     "detected",
     "quality_flags",
 }
+# DHT22: el frame incluye además temperature/humidity como columnas canónicas.
+# soil/rain se conservan como alias (humedad) para no romper modelos existentes.
+_OPTIONAL_FRAME_COLUMNS = frozenset({"temperature", "humidity"})
 
 
 class PredictionValidationError(ValueError):
@@ -113,8 +116,9 @@ def samples_to_frame(samples: Sequence[Mapping[str, Any]]) -> pd.DataFrame:
                 f"samples[{index}].sampling_period_seconds",
                 minimum=1,
             )
-            soil_payload = sample["soil_moisture"]
-            rain_payload = sample["rain"]
+            ambient_payload = sample.get("ambient")
+            soil_payload = sample.get("soil_moisture")
+            rain_payload = sample.get("rain")
             quality_flags = sample.get("quality_flags", [])
             measured_at = sample["measured_at"]
         except KeyError as exc:
@@ -126,14 +130,57 @@ def samples_to_frame(samples: Sequence[Mapping[str, Any]]) -> pd.DataFrame:
             raise PredictionValidationError(f"samples[{index}].id no es válido.")
         if not isinstance(device, str) or not device:
             raise PredictionValidationError(f"samples[{index}].device_id no es válido.")
-        if not isinstance(soil_payload, Mapping) or not isinstance(rain_payload, Mapping):
+        # Nuevo contrato DHT22: ambient{temperature_celsius, humidity_percent}.
+        # Compat: soil_moisture/rain antiguos se mapean a humedad.
+        if isinstance(ambient_payload, Mapping):
+            try:
+                temperature = _finite_number(
+                    ambient_payload.get("temperature_celsius"),
+                    f"samples[{index}].ambient.temperature_celsius",
+                )
+                humidity = _finite_number(
+                    ambient_payload.get("humidity_percent"),
+                    f"samples[{index}].ambient.humidity_percent",
+                )
+            except PredictionValidationError as exc:
+                raise PredictionValidationError(
+                    f"La muestra {index} no contiene lecturas DHT22 válidas."
+                ) from exc
+            if not -40.0 <= temperature <= 80.0:
+                raise PredictionValidationError(
+                    f"samples[{index}].ambient.temperature_celsius fuera de rango."
+                )
+            if not 0.0 <= humidity <= 100.0:
+                raise PredictionValidationError(
+                    f"samples[{index}].ambient.humidity_percent fuera de rango."
+                )
+            detected = bool(humidity >= 70.0)
+            soil_value, rain_value = humidity, humidity
+        elif isinstance(soil_payload, Mapping) and isinstance(rain_payload, Mapping):
+            if not isinstance(soil_payload, Mapping) or not isinstance(
+                rain_payload, Mapping
+            ):
+                raise PredictionValidationError(
+                    f"La muestra {index} no contiene lecturas de sensor válidas."
+                )
+            detected = rain_payload.get("detected")
+            if type(detected) is not bool:
+                raise PredictionValidationError(
+                    f"samples[{index}].rain.detected debe ser booleano."
+                )
+            # Mapeo legacy: soil->humedad para modelos.
+            soil_value = _finite_number(
+                soil_payload.get("percent"),
+                f"samples[{index}].soil_moisture.percent",
+            )
+            rain_value = _finite_number(
+                rain_payload.get("wetness_percent"),
+                f"samples[{index}].rain.wetness_percent",
+            )
+            temperature, humidity = 22.0, float(soil_value)
+        else:
             raise PredictionValidationError(
                 f"La muestra {index} no contiene lecturas de sensor válidas."
-            )
-        detected = rain_payload.get("detected")
-        if type(detected) is not bool:
-            raise PredictionValidationError(
-                f"samples[{index}].rain.detected debe ser booleano."
             )
         if not isinstance(quality_flags, list) or not all(
             isinstance(flag, str) for flag in quality_flags
@@ -153,15 +200,11 @@ def samples_to_frame(samples: Sequence[Mapping[str, Any]]) -> pd.DataFrame:
                 "sequence": sequence,
                 "fecha": parsed_date,
                 "sampling_period_seconds": sampling_period,
-                "soil": _finite_number(
-                    soil_payload.get("percent"),
-                    f"samples[{index}].soil_moisture.percent",
-                ),
-                "rain": _finite_number(
-                    rain_payload.get("wetness_percent"),
-                    f"samples[{index}].rain.wetness_percent",
-                ),
-                "detected": detected,
+                "soil": float(soil_value),
+                "rain": float(rain_value),
+                "detected": bool(detected),
+                "temperature": float(temperature),
+                "humidity": float(humidity),
                 "quality_flags": list(quality_flags),
             }
         )
@@ -697,6 +740,22 @@ def estimate_rain_from_soil(
         confirmed_rain_rows=confirmed_rain_rows,
         neighbor_rain_rows=neighbor_rain_rows,
         global_probability=float(global_probability),
+    )
+
+
+def estimate_humidity_from_temperature(
+    frame,
+    humidity_percent: float,
+    *,
+    threshold: float = 0.5,
+    max_neighbors: int = 201,
+):
+    """Alias DHT22: estima humedad alta a partir de humedad actual.
+
+    Compat: reutiliza estimate_rain_from_soil (soil=humedad).
+    """
+    return estimate_rain_from_soil(
+        frame, humidity_percent, threshold=threshold, max_neighbors=max_neighbors
     )
 
 

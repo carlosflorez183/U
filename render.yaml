@@ -1,0 +1,27 @@
+# Render blueprint: API FastAPI de la estación climática IoT.
+# Al conectar el repositorio en Render, esta definición crea el Web Service.
+# La variable DATABASE_URL se completa con la cadena de conexión de Neon
+# (Settings del backend ya la lee; ver docs/guias/GUIA_2_RENDER.docx).
+services:
+  - type: web
+    name: api-estacion-climatica
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements-api.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health/ready
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: CREDENTIAL_PEPPER
+        generateValue: true
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: ADMIN_SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: ""
+      - key: DATABASE_POOL_MIN_SIZE
+        value: "1"
+      - key: DATABASE_POOL_MAX_SIZE
+        value: "5"

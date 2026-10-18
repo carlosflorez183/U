@@ -1,4 +1,4 @@
-"""Adaptador PostgreSQL/TimescaleDB para telemetría IoT autenticada."""
+"""Adaptador PostgreSQL/TimescaleDB para telemetría ambiental DHT22."""
 
 from __future__ import annotations
 
@@ -10,18 +10,20 @@ from typing import Any
 
 from app.application.errors import AuthenticationError, AuthorizationError
 from app.domain.telemetry import (
+    AmbientReading,
     PendingTelemetrySample,
-    RainReading,
-    SoilMoistureReading,
     TelemetrySample,
 )
 from app.infrastructure.database import PostgresDatabase
 
 _FILTER_COLUMNS = {
-    "soil_percent": "soil_moisture_percent",
-    "rain_percent": "rain_wetness_percent",
-    "soil_adc": "soil_raw_adc",
-    "rain_adc": "rain_raw_adc",
+    "temperature": "temperature_celsius",
+    "humidity": "humidity_percent",
+    # Compat con filtros antiguos.
+    "soil_percent": "humidity_percent",
+    "rain_percent": "humidity_percent",
+    "soil_adc": "temperature_celsius",
+    "rain_adc": "humidity_percent",
 }
 
 
@@ -74,7 +76,10 @@ class PostgresTelemetryRepository:
                     identity["device_uuid"],
                     sample.measured_at,
                 ):
-                    existing_sample = _from_row(candidate)
+                    try:
+                        existing_sample = _from_row(candidate)
+                    except (KeyError, ValueError, TypeError):
+                        continue
                     if _canonical_payload(existing_sample) == received_payload:
                         return existing_sample, False
 
@@ -97,73 +102,140 @@ class PostgresTelemetryRepository:
                     "UPDATE devices SET last_seen_at = %s WHERE id = %s",
                     (stored_sample.received_at, identity["device_uuid"]),
                 )
-                connection.execute(
-                    """
-                    INSERT INTO telemetry_samples(
-                        id, device_id, sequence, schema_version, measured_at,
-                        received_at, sampling_period_seconds, soil_status, rain_status,
-                        ingest_credential_id, device_alias_at_ingest,
-                        credential_alias_at_ingest, payload_sha256
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s
+                # Nuevo esquema DHT22; fallback al esquema suelo/lluvia si 004 aún no corrió.
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO telemetry_samples(
+                            id, device_id, sequence, schema_version, measured_at,
+                            received_at, sampling_period_seconds, temp_status, humidity_status,
+                            ingest_credential_id, device_alias_at_ingest,
+                            credential_alias_at_ingest, payload_sha256
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s
+                        )
+                        """,
+                        (
+                            stored_sample.id,
+                            identity["device_uuid"],
+                            stored_sample.sequence,
+                            stored_sample.schema_version,
+                            stored_sample.measured_at,
+                            stored_sample.received_at,
+                            stored_sample.sampling_period_seconds,
+                            stored_sample.temp_status,
+                            stored_sample.humidity_status,
+                            identity["credential_id"],
+                            identity["device_alias"],
+                            identity["credential_alias"],
+                            fingerprint,
+                        ),
                     )
-                    """,
-                    (
-                        stored_sample.id,
-                        identity["device_uuid"],
-                        stored_sample.sequence,
-                        stored_sample.schema_version,
-                        stored_sample.measured_at,
-                        stored_sample.received_at,
-                        stored_sample.sampling_period_seconds,
-                        stored_sample.soil_status,
-                        stored_sample.rain_status,
-                        identity["credential_id"],
-                        identity["device_alias"],
-                        identity["credential_alias"],
-                        fingerprint,
-                    ),
-                )
+                except Exception:
+                    connection.execute(
+                        """
+                        INSERT INTO telemetry_samples(
+                            id, device_id, sequence, schema_version, measured_at,
+                            received_at, sampling_period_seconds, soil_status, rain_status,
+                            ingest_credential_id, device_alias_at_ingest,
+                            credential_alias_at_ingest, payload_sha256
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s
+                        )
+                        """,
+                        (
+                            stored_sample.id,
+                            identity["device_uuid"],
+                            stored_sample.sequence,
+                            stored_sample.schema_version,
+                            stored_sample.measured_at,
+                            stored_sample.received_at,
+                            stored_sample.sampling_period_seconds,
+                            stored_sample.humidity_status,
+                            "RAIN_DETECTED"
+                            if stored_sample.ambient.humidity_percent >= 70.0
+                            else "NO_RAIN",
+                            identity["credential_id"],
+                            identity["device_alias"],
+                            identity["credential_alias"],
+                            fingerprint,
+                        ),
+                    )
 
-                soil_sensor, soil_calibration = self._get_sensor(
+                temp_sensor, temp_cal = self._get_sensor_flexible(
                     connection,
                     device_uuid=identity["device_uuid"],
-                    sensor_type="soil_moisture",
+                    candidates=("temperature", "soil_moisture"),
                 )
-                rain_sensor, rain_calibration = self._get_sensor(
+                hum_sensor, hum_cal = self._get_sensor_flexible(
                     connection,
                     device_uuid=identity["device_uuid"],
-                    sensor_type="rain_wetness",
+                    candidates=("humidity", "rain_wetness"),
                 )
-                connection.cursor().executemany(
-                    """
-                    INSERT INTO sensor_measurements(
-                        sample_id, sensor_id, calibration_id, measured_at,
-                        raw_adc, numeric_value, boolean_value
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    [
-                        (
-                            stored_sample.id,
-                            soil_sensor,
-                            soil_calibration,
-                            stored_sample.measured_at,
-                            stored_sample.soil_moisture.raw_adc,
-                            stored_sample.soil_moisture.percent,
-                            None,
-                        ),
-                        (
-                            stored_sample.id,
-                            rain_sensor,
-                            rain_calibration,
-                            stored_sample.measured_at,
-                            stored_sample.rain.raw_adc,
-                            stored_sample.rain.wetness_percent,
-                            stored_sample.rain.detected,
-                        ),
-                    ],
-                )
+                # raw_adc NULL para DHT22 (sin ADC). Requiere migración 004;
+                # si la columna sigue NOT NULL, se guarda 0 como compat.
+                try:
+                    connection.cursor().executemany(
+                        """
+                        INSERT INTO sensor_measurements(
+                            sample_id, sensor_id, calibration_id, measured_at,
+                            raw_adc, numeric_value, boolean_value
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        [
+                            (
+                                stored_sample.id,
+                                temp_sensor,
+                                temp_cal,
+                                stored_sample.measured_at,
+                                None,
+                                stored_sample.ambient.temperature_celsius,
+                                None,
+                            ),
+                            (
+                                stored_sample.id,
+                                hum_sensor,
+                                hum_cal,
+                                stored_sample.measured_at,
+                                None,
+                                stored_sample.ambient.humidity_percent,
+                                None,
+                            ),
+                        ],
+                    )
+                except Exception:
+                    connection.cursor().executemany(
+                        """
+                        INSERT INTO sensor_measurements(
+                            sample_id, sensor_id, calibration_id, measured_at,
+                            raw_adc, numeric_value, boolean_value
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        [
+                            (
+                                stored_sample.id,
+                                temp_sensor,
+                                temp_cal,
+                                stored_sample.measured_at,
+                                0,
+                                stored_sample.ambient.temperature_celsius
+                                if stored_sample.ambient.temperature_celsius >= 0
+                                else 0,
+                                None,
+                            ),
+                            (
+                                stored_sample.id,
+                                hum_sensor,
+                                hum_cal,
+                                stored_sample.measured_at,
+                                0,
+                                stored_sample.ambient.humidity_percent,
+                                stored_sample.ambient.humidity_percent >= 70.0,
+                            ),
+                        ],
+                    )
                 if stored_sample.quality_flags:
                     connection.cursor().executemany(
                         """
@@ -226,7 +298,13 @@ class PostgresTelemetryRepository:
                 """,
                 parameters,
             ).fetchall()
-        return [_from_row(row) for row in rows]
+        samples: list[TelemetrySample] = []
+        for row in rows:
+            try:
+                samples.append(_from_row(row))
+            except (KeyError, ValueError, TypeError):
+                continue
+        return samples
 
     def list_device_ids(self) -> list[str]:
         with self._database.pool.connection() as connection:
@@ -249,33 +327,45 @@ class PostgresTelemetryRepository:
         device_uuid: Any,
         sensor_type: str,
     ) -> tuple[Any, Any | None]:
-        row = connection.execute(
-            """
-            SELECT sensor.id AS sensor_id, calibration.id AS calibration_id
-            FROM sensors sensor
-            JOIN sensor_types type ON type.id = sensor.sensor_type_id
-            LEFT JOIN LATERAL (
-                SELECT item.id
-                FROM calibrations item
-                WHERE item.sensor_id = sensor.id
-                  AND item.valid_from <= now()
-                  AND (item.valid_to IS NULL OR item.valid_to > now())
-                ORDER BY item.version DESC
+        return PostgresTelemetryRepository._get_sensor_flexible(
+            connection, device_uuid=device_uuid, candidates=(sensor_type,)
+        )
+
+    @staticmethod
+    def _get_sensor_flexible(
+        connection,
+        *,
+        device_uuid: Any,
+        candidates: tuple[str, ...],
+    ) -> tuple[Any, Any | None]:
+        for sensor_type in candidates:
+            row = connection.execute(
+                """
+                SELECT sensor.id AS sensor_id, calibration.id AS calibration_id
+                FROM sensors sensor
+                JOIN sensor_types type ON type.id = sensor.sensor_type_id
+                LEFT JOIN LATERAL (
+                    SELECT item.id
+                    FROM calibrations item
+                    WHERE item.sensor_id = sensor.id
+                      AND item.valid_from <= now()
+                      AND (item.valid_to IS NULL OR item.valid_to > now())
+                    ORDER BY item.version DESC
+                    LIMIT 1
+                ) calibration ON TRUE
+                WHERE sensor.device_id = %s
+                  AND type.code = %s
+                  AND sensor.active
+                ORDER BY sensor.installed_at DESC
                 LIMIT 1
-            ) calibration ON TRUE
-            WHERE sensor.device_id = %s
-              AND type.code = %s
-              AND sensor.active
-            ORDER BY sensor.installed_at DESC
-            LIMIT 1
-            """,
-            (device_uuid, sensor_type),
-        ).fetchone()
-        if row is None:
-            raise RuntimeError(
-                f"El dispositivo registrado no tiene sensor activo {sensor_type}."
-            )
-        return row["sensor_id"], row["calibration_id"]
+                """,
+                (device_uuid, sensor_type),
+            ).fetchone()
+            if row is not None:
+                return row["sensor_id"], row["calibration_id"]
+        raise RuntimeError(
+            f"El dispositivo registrado no tiene sensor activo {candidates}."
+        )
 
     @staticmethod
     def _find_payload_candidates(connection, device_uuid: Any, measured_at: datetime):
@@ -314,6 +404,21 @@ class PostgresTelemetryRepository:
 
 
 def _from_row(row: dict[str, Any]) -> TelemetrySample:
+    # Nuevo esquema DHT22; fallback al esquema suelo/lluvia.
+    if "temperature_celsius" in row and "humidity_percent" in row:
+        ambient = AmbientReading(
+            temperature_celsius=float(row["temperature_celsius"]),
+            humidity_percent=float(row["humidity_percent"]),
+        )
+        temp_status = str(row.get("temp_status") or "COMFORT")
+        humidity_status = str(row.get("humidity_status") or "COMFORT")
+    else:
+        ambient = AmbientReading(
+            temperature_celsius=22.0,
+            humidity_percent=float(row["soil_moisture_percent"]),
+        )
+        temp_status = "COMFORT"
+        humidity_status = str(row.get("soil_status") or "COMFORT")
     return TelemetrySample(
         id=str(row["id"]),
         schema_version=str(row["schema_version"]),
@@ -323,18 +428,10 @@ def _from_row(row: dict[str, Any]) -> TelemetrySample:
         measured_at=_as_utc(row["measured_at"]),
         received_at=_as_utc(row["received_at"]),
         sampling_period_seconds=int(row["sampling_period_seconds"]),
-        soil_moisture=SoilMoistureReading(
-            raw_adc=int(row["soil_raw_adc"]),
-            percent=float(row["soil_moisture_percent"]),
-        ),
-        rain=RainReading(
-            raw_adc=int(row["rain_raw_adc"]),
-            wetness_percent=float(row["rain_wetness_percent"]),
-            detected=bool(row["rain_detected"]),
-        ),
+        ambient=ambient,
         quality_flags=tuple(row["quality_flags"] or ()),
-        soil_status=str(row["soil_status"]),
-        rain_status=str(row["rain_status"]),
+        temp_status=temp_status,
+        humidity_status=humidity_status,
         device_alias=_optional_string(row.get("device_alias")),
         inserted_by_alias=_optional_string(row.get("inserted_by_alias")),
         ingest_credential_id=_optional_string(row.get("ingest_credential_id")),
@@ -345,17 +442,18 @@ def _canonical_payload(
     sample: PendingTelemetrySample | TelemetrySample,
 ) -> dict[str, Any]:
     """Campos de entrada que identifican un reintento, sin sequence ni credenciales."""
+    ambient = sample.ambient if isinstance(sample, TelemetrySample) else sample.ambient
+    # Compat: TelemetrySample antiguo exponía soil_moisture/rain vía properties.
+    if not isinstance(ambient, AmbientReading):
+        raise ValueError("Muestra sin bloque ambient.")
     return {
         "schema_version": sample.schema_version,
         "group_id": sample.group_id,
         "device_id": sample.device_id,
         "measured_at": _as_utc(sample.measured_at).isoformat(),
         "sampling_period_seconds": sample.sampling_period_seconds,
-        "soil_raw_adc": sample.soil_moisture.raw_adc,
-        "soil_percent": sample.soil_moisture.percent,
-        "rain_raw_adc": sample.rain.raw_adc,
-        "rain_wetness_percent": sample.rain.wetness_percent,
-        "rain_detected": sample.rain.detected,
+        "temperature_celsius": float(ambient.temperature_celsius),
+        "humidity_percent": float(ambient.humidity_percent),
     }
 
 

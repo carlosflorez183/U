@@ -43,20 +43,14 @@ with st.form("telemetry_form"):
     device_id = identity.text_input("Dispositivo", value="esp32-grupo-01")
     sampling_period = identity.selectbox("Periodo (s)", options=[5, 10])
 
-    st.subheader("Sensor capacitivo de humedad del suelo")
-    soil = st.container(horizontal=True)
-    soil_raw = soil.number_input("ADC suelo", min_value=0, max_value=4095, value=2400)
-    soil_percent = soil.number_input(
-        "Humedad del suelo (%)", min_value=0.0, max_value=100.0, value=45.0
+    st.subheader("Sensor DHT22 ambiental")
+    ambient = st.container(horizontal=True)
+    temperature = ambient.number_input(
+        "Temperatura (°C)", min_value=-40.0, max_value=80.0, value=23.4, step=0.1
     )
-
-    st.subheader("Sensor de lluvia")
-    rain = st.container(horizontal=True)
-    rain_raw = rain.number_input("ADC lluvia", min_value=0, max_value=4095, value=3600)
-    rain_percent = rain.number_input(
-        "Superficie mojada (%)", min_value=0.0, max_value=100.0, value=5.0
+    humidity = ambient.number_input(
+        "Humedad relativa (%)", min_value=0.0, max_value=100.0, value=65.2, step=0.1
     )
-    rain_detected = rain.checkbox("Lluvia detectada", value=False)
 
     submitted = st.form_submit_button(
         "Enviar muestra", icon=":material/sensors:", type="primary"
@@ -71,11 +65,9 @@ if submitted:
         "device_id": device_id,
         "measured_at": attempted_at,
         "sampling_period_seconds": sampling_period,
-        "soil_moisture": {"raw_adc": soil_raw, "percent": soil_percent},
-        "rain": {
-            "raw_adc": rain_raw,
-            "wetness_percent": rain_percent,
-            "detected": rain_detected,
+        "ambient": {
+            "temperature_celsius": temperature,
+            "humidity_percent": humidity,
         },
     }
     attempt = {
@@ -194,10 +186,9 @@ Content-Type: application/json''',
   "schema_version": "2.0",
   "group_id": "grupo-01",
   "device_id": "esp32-grupo-01",
-  "measured_at": "2026-09-04T14:00:00Z",
+  "measured_at": "2026-09-07T22:30:00Z",
   "sampling_period_seconds": 5,
-  "soil_moisture": {"raw_adc": 2400, "percent": 45.0},
-  "rain": {"raw_adc": 3600, "wetness_percent": 5.0, "detected": false}
+  "ambient": {"temperature_celsius": 23.4, "humidity_percent": 65.2}
 }''',
         language="json",
     )

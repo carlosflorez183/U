@@ -50,56 +50,69 @@ FROM devices device
 WHERE sample.device_id = device.id
   AND sample.device_alias_at_ingest IS NULL;
 
-CREATE OR REPLACE VIEW vw_telemetry_wide AS
-SELECT
-    sample.id,
-    grp.code AS group_id,
-    dev.external_id AS device_id,
-    sample.sequence,
-    sample.schema_version,
-    sample.measured_at,
-    sample.received_at,
-    sample.sampling_period_seconds,
-    soil.raw_adc AS soil_raw_adc,
-    soil.numeric_value AS soil_moisture_percent,
-    sample.soil_status,
-    rain.raw_adc AS rain_raw_adc,
-    rain.numeric_value AS rain_wetness_percent,
-    COALESCE(rain.boolean_value, FALSE) AS rain_detected,
-    sample.rain_status,
-    ARRAY(
-        SELECT flag.flag_code
-        FROM sample_quality_flags flag
-        WHERE flag.sample_id = sample.id
-        ORDER BY flag.flag_code
-    ) AS quality_flags,
-    COALESCE(sample.device_alias_at_ingest, dev.name) AS device_alias,
-    sample.credential_alias_at_ingest AS inserted_by_alias,
-    sample.ingest_credential_id,
-    sample.payload_sha256
-FROM telemetry_samples sample
-JOIN devices dev ON dev.id = sample.device_id
-JOIN iot_groups grp ON grp.id = dev.group_id
-LEFT JOIN LATERAL (
-    SELECT measurement.raw_adc, measurement.numeric_value
-    FROM sensor_measurements measurement
-    JOIN sensors sensor ON sensor.id = measurement.sensor_id
-    JOIN sensor_types sensor_type ON sensor_type.id = sensor.sensor_type_id
-    WHERE measurement.sample_id = sample.id
-      AND sensor_type.code = 'soil_moisture'
-    ORDER BY measurement.measured_at DESC
-    LIMIT 1
-) soil ON TRUE
-LEFT JOIN LATERAL (
-    SELECT measurement.raw_adc, measurement.numeric_value, measurement.boolean_value
-    FROM sensor_measurements measurement
-    JOIN sensors sensor ON sensor.id = measurement.sensor_id
-    JOIN sensor_types sensor_type ON sensor_type.id = sensor.sensor_type_id
-    WHERE measurement.sample_id = sample.id
-      AND sensor_type.code = 'rain_wetness'
-    ORDER BY measurement.measured_at DESC
-    LIMIT 1
-) rain ON TRUE;
+-- Solo aplica la vista suelo/lluvia si el esquema aún no migró a DHT22 (004).
+-- En re-ejecuciones con temp_status existente, 004 ya dejó la vista ambiental.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name='telemetry_samples' AND column_name='soil_status') THEN
+        EXECUTE $view$
+        CREATE OR REPLACE VIEW vw_telemetry_wide AS
+        SELECT
+            sample.id,
+            grp.code AS group_id,
+            dev.external_id AS device_id,
+            sample.sequence,
+            sample.schema_version,
+            sample.measured_at,
+            sample.received_at,
+            sample.sampling_period_seconds,
+            soil.raw_adc AS soil_raw_adc,
+            soil.numeric_value AS soil_moisture_percent,
+            sample.soil_status,
+            rain.raw_adc AS rain_raw_adc,
+            rain.numeric_value AS rain_wetness_percent,
+            COALESCE(rain.boolean_value, FALSE) AS rain_detected,
+            sample.rain_status,
+            ARRAY(
+                SELECT flag.flag_code
+                FROM sample_quality_flags flag
+                WHERE flag.sample_id = sample.id
+                ORDER BY flag.flag_code
+            ) AS quality_flags,
+            COALESCE(sample.device_alias_at_ingest, dev.name) AS device_alias,
+            sample.credential_alias_at_ingest AS inserted_by_alias,
+            sample.ingest_credential_id,
+            sample.payload_sha256
+        FROM telemetry_samples sample
+        JOIN devices dev ON dev.id = sample.device_id
+        JOIN iot_groups grp ON grp.id = dev.group_id
+        LEFT JOIN LATERAL (
+            SELECT measurement.raw_adc, measurement.numeric_value
+            FROM sensor_measurements measurement
+            JOIN sensors sensor ON sensor.id = measurement.sensor_id
+            JOIN sensor_types sensor_type ON sensor_type.id = sensor.sensor_type_id
+            WHERE measurement.sample_id = sample.id
+              AND sensor_type.code = 'soil_moisture'
+            ORDER BY measurement.measured_at DESC
+            LIMIT 1
+        ) soil ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT measurement.raw_adc, measurement.numeric_value, measurement.boolean_value
+            FROM sensor_measurements measurement
+            JOIN sensors sensor ON sensor.id = measurement.sensor_id
+            JOIN sensor_types sensor_type ON sensor_type.id = sensor.sensor_type_id
+            WHERE measurement.sample_id = sample.id
+              AND sensor_type.code = 'rain_wetness'
+            ORDER BY measurement.measured_at DESC
+            LIMIT 1
+        ) rain ON TRUE
+        $view$;
+    ELSE
+        RAISE NOTICE 'vw_telemetry_wide ya es ambiental (004); se omite vista 002.';
+    END IF;
+END
+$$;
 
 INSERT INTO schema_migrations(version) VALUES ('002_device_credentials')
 ON CONFLICT (version) DO NOTHING;

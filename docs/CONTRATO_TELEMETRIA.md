@@ -62,10 +62,9 @@ Cuerpo:
   "schema_version": "2.0",
   "group_id": "grupo-01",
   "device_id": "esp32-grupo-01",
-  "measured_at": "2026-09-04T14:00:00Z",
+  "measured_at": "2026-09-07T22:30:00Z",
   "sampling_period_seconds": 5,
-  "soil_moisture": {"raw_adc": 2470, "percent": 34.8},
-  "rain": {"raw_adc": 3520, "wetness_percent": 8.1, "detected": false}
+  "ambient": {"temperature_celsius": 23.4, "humidity_percent": 65.2}
 }
 ```
 
